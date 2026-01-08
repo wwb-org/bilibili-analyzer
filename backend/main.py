@@ -4,7 +4,7 @@ B站视频内容趋势分析系统 - 后端入口
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, videos, statistics, admin
+from app.api import auth, videos, statistics, admin, live
 from app.core.config import settings
 from app.core.database import engine, Base
 
@@ -31,6 +31,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(videos.router, prefix="/api/videos", tags=["视频"])
 app.include_router(statistics.router, prefix="/api/statistics", tags=["统计分析"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
+app.include_router(live.router, prefix="/api/live", tags=["直播分析"])
 
 
 @app.get("/")
