@@ -72,7 +72,8 @@ bilibili-analyzer/
 │   │   │   ├── auth.py         # 用户认证
 │   │   │   ├── videos.py       # 视频数据
 │   │   │   ├── statistics.py   # 统计分析
-│   │   │   └── admin.py        # 管理员功能
+│   │   │   ├── admin.py        # 管理员功能
+│   │   │   └── live.py         # 直播弹幕分析 WebSocket
 │   │   ├── core/               # 核心配置
 │   │   │   ├── config.py       # 应用配置
 │   │   │   ├── database.py     # 数据库连接
@@ -81,11 +82,13 @@ bilibili-analyzer/
 │   │   │   └── models.py       # SQLAlchemy模型
 │   │   ├── services/           # 业务服务
 │   │   │   ├── crawler.py      # B站数据采集
-│   │   │   ├── nlp.py          # NLP分析
+│   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
+│   │   │   ├── live_client.py  # B站直播弹幕客户端封装
 │   │   │   └── analyzer.py     # 数据分析
 │   │   └── tasks/              # 定时任务
 │   │       └── scheduler.py    # APScheduler
 │   ├── main.py                 # 应用入口
+│   ├── test_websocket.py       # WebSocket 测试脚本
 │   └── requirements.txt
 │
 ├── streaming/                  # Kafka + Spark Streaming
@@ -410,6 +413,61 @@ GET  /recommend/{bvid}  # 相似视频推荐
 ### 直播分析 (/api/live)
 ```
 WebSocket /ws/{room_id}  # 直播弹幕实时分析
+GET  /rooms              # 获取活跃直播间列表
+GET  /rooms/{room_id}/status  # 获取直播间连接状态
+```
+
+#### WebSocket 消息格式
+
+**服务端推送消息类型：**
+
+| type | 说明 | 频率 |
+|------|------|------|
+| status | 连接状态 | 连接时 |
+| danmaku | 弹幕消息（含情感分析） | 实时 |
+| gift | 礼物消息 | 实时 |
+| interact | 互动消息（进场/点赞） | 实时 |
+| stats | 统计数据 | 每5秒 |
+| wordcloud | 词云数据 | 每10秒 |
+
+**弹幕消息示例：**
+```json
+{
+  "type": "danmaku",
+  "data": {
+    "content": "弹幕内容",
+    "user_name": "用户名",
+    "user_id": 12345,
+    "timestamp": "2024-01-01T12:00:00",
+    "sentiment_score": 0.75,
+    "sentiment_label": "positive"
+  }
+}
+```
+
+**统计数据示例：**
+```json
+{
+  "type": "stats",
+  "data": {
+    "total_danmaku": 100,
+    "total_gift": 5,
+    "danmaku_rate": 12.5,
+    "avg_sentiment": 0.65,
+    "sentiment_dist": {"positive": 40, "neutral": 35, "negative": 25}
+  }
+}
+```
+
+**词云数据示例：**
+```json
+{
+  "type": "wordcloud",
+  "data": [
+    {"name": "主播", "value": 50},
+    {"name": "好看", "value": 30}
+  ]
+}
 ```
 
 ### 数据导出 (/api/export)
@@ -621,6 +679,23 @@ python train_xgboost.py      # 训练热度预测模型
 python train_kmeans.py       # 训练UP主聚类模型
 ```
 
+### 直播弹幕功能测试
+```bash
+cd backend
+
+# 1. 启动后端服务
+python main.py
+
+# 2. 新终端运行 WebSocket 测试
+python test_websocket.py <直播间ID>
+# 示例: python test_websocket.py 22625027
+
+# 测试输出说明:
+# [弹幕][+0.75] 用户名: 弹幕内容   (+正面 =中性 -负面)
+# --- 统计 --- (每5秒更新)
+# [词云] TOP10: 词1(频次) | 词2(频次)... (每10秒更新)
+```
+
 ---
 
 ## 环境变量配置
@@ -779,8 +854,9 @@ python test_bilibili_live.py <直播间ID> --client aiohttp
 
 ### 后端功能
 - [ ] 完善统计分析API
-- [ ] 直播弹幕WebSocket服务
+- [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
 - [ ] 数据导出功能
+- [ ] 直播数据持久化存储
 
 ### 大数据模块
 - [ ] streaming/ - Kafka + Spark Streaming
