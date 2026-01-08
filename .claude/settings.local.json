@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: 初始化项目 - B站视频内容趋势分析系统\n\n后端基础框架：\n- FastAPI 应用入口和路由配置\n- SQLAlchemy 数据模型（用户、视频、评论、弹幕、热词、采集日志）\n- 用户认证 API（注册、登录、JWT）\n- 视频数据 API（列表、详情）\n- 统计分析 API（概览、分区、热词、趋势、情感）\n- 管理员 API（用户管理、采集日志）\n- B站数据采集服务（热门视频、评论）\n- NLP分析服务（情感分析、关键词提取、词云）\n- 定时任务调度器\n\n直播弹幕测试：\n- bilibili-api-python 依赖\n- 直播弹幕连接测试脚本\n\n文档：\n- CLAUDE.md 项目说明和开发指南\n- bilibili-api-python 使用指南\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
