@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **核心特色**：
 1. Kafka + Spark Streaming 实时流处理
 2. ODS→DWD→DWS→ADS 数据仓库分层设计
-3. XGBoost热度预测 + K-Means用户聚类 + TF-IDF内容推荐
+3. XGBoost热度预测 + TF-IDF内容推荐
 4. 实时直播弹幕分析（亮点功能）
 
 ---
@@ -34,7 +34,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Jieba | 中文分词 |
 | SnowNLP | 情感分析 |
 | XGBoost | 热度预测模型 |
-| Scikit-learn | K-Means聚类、TF-IDF |
+| Scikit-learn | TF-IDF推荐 |
 | bilibili-api-python | B站直播弹幕连接 |
 
 ### 前端
@@ -56,7 +56,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bilibili-analyzer/
 ├── frontend/                   # Vue3 前端项目
 │   ├── src/
-│   │   ├── views/              # 页面组件（12个页面）
+│   │   ├── views/              # 页面组件（10个页面）
 │   │   ├── components/         # 公共组件
 │   │   ├── api/                # API请求封装
 │   │   ├── store/              # Pinia状态管理
@@ -105,7 +105,6 @@ bilibili-analyzer/
 │
 ├── ml/                         # 机器学习模块
 │   ├── train_xgboost.py        # 热度预测训练
-│   ├── train_kmeans.py         # UP主聚类
 │   ├── similarity.py           # TF-IDF相似度推荐
 │   └── models/                 # 训练好的模型文件
 │
@@ -138,7 +137,7 @@ bilibili-analyzer/
 | 1 | 登录 | Login.vue | 公开 | 用户登录 |
 | 2 | 注册 | Register.vue | 公开 | 用户注册 |
 | 3 | 首页仪表盘 | Home.vue | 用户 | 数据概览仪表盘 |
-| 4 | 视频数据 | Videos.vue | 用户 | 视频列表 + 单视频详情（含评论、热词） |
+| 4 | 视频数据 | Videos.vue | 用户 | 视频列表 + 单视频详情 |
 | 5 | 评论分析 | Comments.vue | 用户 | 全局评论聚合分析 |
 | 6 | 热词分析 | Keywords.vue | 用户 | 全局热词聚合分析 |
 | 7 | 直播分析 | Live.vue | 用户 | **实时弹幕分析（亮点）** |
@@ -146,225 +145,48 @@ bilibili-analyzer/
 | 9 | 管理后台 | Admin.vue | 管理员 | 用户管理、采集控制 |
 | 10 | 个人中心 | Profile.vue | 用户 | 个人信息、修改密码 |
 
-### 核心页面详细说明
-
-#### 全局导航栏（左侧边栏）
-采用左侧固定导航栏，所有页面共享：
-- 首页、视频数据、评论分析、热词分析、直播分析、智能预测
-- 管理后台（仅管理员可见）
-- 个人中心、退出登录
+### 核心页面说明
 
 #### 首页仪表盘 (Home.vue)
-**模块一：核心指标卡片（5个）**
-- 视频总数（+今日新增）
-- 总播放量
-- 总评论数（+今日新增）
-- 总弹幕数（+今日新增）
-- 平均互动率
-
-**模块二：数据趋势图**
-- ECharts折线图，支持切换：播放量/新增视频/评论数
-- 时间范围切换：近7天/近30天
-
-**模块三：分区分布**
-- ECharts环形图，展示视频分区占比
-- 点击扇区可跳转该分区视频列表
-
-**模块四：热门视频TOP10**
-- 列表展示：标题、播放量、UP主
-- 点击可跳转视频详情
-
-**模块五：情感分析概览**
-- 进度条展示正面/中性/负面占比
-- 点击可跳转评论分析页
-
-**模块六：今日热词云**
-- echarts-wordcloud展示今日高频词
-- 点击词语可跳转热词分析页
-
-**模块七：系统状态（仅管理员可见）**
-- 最近采集时间、状态、数量
-- MySQL/Redis/Kafka连接状态
-- 点击可进入管理后台
+- 核心指标卡片：视频总数、总播放量、总评论数、总弹幕数、平均互动率
+- 数据趋势图：播放量/新增视频/评论数（支持7天/30天切换）
+- 分区分布饼图、热门视频TOP10、情感分析概览、今日热词云
+- 系统状态（仅管理员可见）
 
 #### 视频数据 (Videos.vue)
-**页面定位**：视频列表 + 单视频详情（以视频为中心的完整画像）
-
-**视频列表**：
-- 筛选栏：时间范围、分区、关键词、排序方式
-- 表格字段：封面、标题、UP主、分区、播放量、点赞、投币、发布时间
-- 底部：分页 + Excel导出
-
-**视频详情弹窗**（点击视频打开）：
-- 视频基础信息：标题、封面、UP主、播放量、点赞、投币等
-- 该视频的评论列表（带情感标签）
-- 该视频的评论情感分布饼图
-- 该视频的热词/弹幕词云
+- 视频列表：筛选（时间、分区、关键词）、分页、导出Excel
+- 视频详情弹窗：基础信息、评论列表（带情感标签）、情感分布饼图、热词词云
 
 #### 评论分析 (Comments.vue)
-**页面定位**：全局评论聚合分析（跨视频）
-
-**模块一：筛选栏**
-- 时间范围：近7天/近30天/自定义
-- 视频分区：全部/游戏/生活/科技/...
-- 情感类型：全部/正面/中性/负面
-- 关键词搜索：搜索评论内容
-
-**模块二：情感统计卡片（3个）**
-- 正面评论：数量+占比（绿色）
-- 中性评论：数量+占比（灰色）
-- 负面评论：数量+占比（红色）
-
-**模块三：情感分布饼图**
-- ECharts饼图展示正面/中性/负面占比
-
-**模块四：情感趋势折线图**
-- X轴日期，Y轴评论数量
-- 三条线：正面、中性、负面
-
-**模块五：评论词云**
-- 全局高频词展示
-- 颜色区分：正面词绿色、负面词红色、中性词灰色
-- 点击词语可筛选包含该词的评论
-
-**模块六：评论列表**
-- 字段：评论内容、所属视频（可跳转）、用户名、情感标签、情感分数、发布时间
-- 支持分页、按情感分数排序
-- 支持导出Excel
+- 筛选栏：时间范围、视频分区、情感类型、关键词搜索
+- 情感统计卡片 + 分布饼图 + 趋势折线图
+- 评论词云（颜色区分情感）、评论列表（支持分页、导出）
 
 #### 热词分析 (Keywords.vue)
-**页面定位**：全局热词聚合分析（跨视频）
-
-**模块一：筛选栏**
-- 时间范围：近7天/近30天/自定义
-- 视频分区：全部/游戏/生活/科技/...
-- 词来源：全部/标题/弹幕/评论
-
-**模块二：热词统计卡片（3个）**
-- 今日热词数：今日出现的不同词汇数量
-- 今日Top1热词：频次最高的词
-- 新晋热词：今日新上榜的热词数量
-
-**模块三：热词词云**
-- ECharts wordcloud展示，词频越高越大
-- 点击词语选中，联动更新趋势图和详情面板
-
-**模块四：热词排行榜**
-- 字段：排名、热词、频次、来源、较昨日涨跌
-- 支持按频次/涨幅排序
-- 点击热词查看详情
-
-**模块五：热词趋势图**
-- 显示选中热词的历史频次变化
-- X轴日期，Y轴频次
-
-**模块六：热词详情面板**（点击热词展开）
-- 基本信息：总频次、首次出现时间
-- 来源分布饼图：标题/弹幕/评论占比
-- 关联视频列表：包含该词的视频
-- 相关评论/弹幕：最新10条
-
-**导出功能**：支持导出热词数据Excel
+- 筛选栏：时间范围、视频分区、词来源
+- 热词统计卡片、热词词云、热词排行榜
+- 热词趋势图、热词详情面板（来源分布、关联视频）
 
 #### 直播分析 (Live.vue) - 亮点功能
-**页面定位**：实时连接B站直播间，对弹幕进行实时NLP分析
-
-**模块一：直播间输入**
-- 输入框：直播间ID或URL
-- 连接按钮：开始/停止连接
-- 连接状态：已连接/连接中/未连接
-
-**模块二：直播间信息卡片**
-- 主播名称、头像、直播标题
-- 当前人气值、直播时长
-
-**模块三：实时弹幕流**
-- 滚动显示最新弹幕
-- 每条弹幕带情感标签（正面绿/负面红/中性灰）
-- 支持暂停滚动查看
-
-**模块四：统计卡片（4个）**
-- 总弹幕数、弹幕速率（条/分钟）、平均情感分、礼物数
-
-**模块五：情感分布饼图**
-- 正面/中性/负面占比，实时更新
-
-**模块六：情感折线图**
-- 实时展示情感变化趋势
-- X轴时间，Y轴情感分数
-
-**模块七：人气曲线图**
-- 监测直播间热度变化
-- X轴时间，Y轴人气值
-
-**模块八：实时弹幕词云**
-- 高频词展示，每10秒更新
-
-**模块九：礼物明细**
-- 礼物名称、送礼人、价值
-
-**数据存储**：直播结束后保存弹幕数据供后续分析
+- 直播间输入：输入房间ID，连接/断开按钮
+- 实时弹幕流：滚动显示，每条带情感标签
+- 统计卡片：弹幕数、弹幕速率、平均情感分、礼物数
+- 情感分布饼图 + 情感趋势图 + 实时词云
 
 #### ML预测 (Prediction.vue)
-**页面定位**：机器学习功能展示（热度预测 + 相似推荐）
-
-**模块一：热度预测**
-- 视频选择：下拉搜索选择已有视频
-- 预测结果：7天后播放量预测值、置信区间
-- 特征重要性：柱状图展示各特征贡献度
-
-**模块二：相似视频推荐**
-- 视频选择：下拉搜索选择一个视频
-- 推荐结果：相似视频TOP10（标题、相似度分数、播放量）
-- 相似原因：展示共同关键词
-
-**模块三：预测历史**
-- 用户历史预测记录列表
-- 字段：预测时间、视频标题、预测值、实际值（如有）
-
-**模块四：模型信息面板**
-- 模型版本、训练时间、训练数据量、模型准确率
+- 热度预测：选择视频，预测7天后播放量，展示特征重要性
+- 相似视频推荐：选择视频，展示TOP10相似视频
+- 预测历史记录、模型信息面板
 
 #### 管理员后台 (Admin.vue)
-**页面定位**：管理员专属，系统管理与数据采集控制
-
-**模块一：用户管理**
-- 用户列表：用户名、邮箱、角色、状态、注册时间
-- 操作：启用/禁用、修改角色
-- 搜索筛选：按用户名、角色、状态筛选
-
-**模块二：采集任务管理**
-- 任务状态：当前采集任务运行状态
-- 操作：启动/停止、立即执行
-- 采集配置：采集间隔、每次数量等参数
-
-**模块三：采集日志**
-- 字段：任务名称、状态、采集数量、开始/结束时间、错误信息
-- 支持分页查看
-
-**模块四：系统状态监控**
-- MySQL：连接状态、响应时间
-- Redis：连接状态、内存使用
-- Kafka：连接状态、Topic数量
-
-**模块五：数据统计**
-- 各表数据量：视频数、评论数、弹幕数、热词数等
-
-**模块六：数据清理**
-- 删除N天前的数据
-- 操作需二次确认
+- 用户管理：列表、启用/禁用、修改角色
+- 采集任务管理：启动/停止、配置参数、查看日志
+- 系统状态监控：MySQL/Redis/Kafka连接状态
+- 数据统计、数据清理
 
 #### 个人中心 (Profile.vue)
-**页面定位**：用户个人信息管理
-
-**模块一：个人信息**
-- 用户名（不可修改）
-- 邮箱（可修改）
-- 角色（显示）
-- 注册时间（显示）
-
-**模块二：修改密码**
-- 当前密码、新密码、确认密码
+- 个人信息：用户名、邮箱、角色、注册时间
+- 修改密码
 
 ---
 
@@ -394,14 +216,6 @@ GET  /categories      # 分区统计（饼图）
 GET  /keywords        # 热词数据（词云）
 GET  /sentiment       # 情感分析统计
 GET  /top-videos      # 热门视频榜
-GET  /top-authors     # 热门UP主榜
-```
-
-### UP主分析 (/api/authors)
-```
-GET  /             # UP主列表（含聚类标签）
-GET  /{author_id}  # UP主详情
-GET  /{author_id}/videos  # UP主视频列表
 ```
 
 ### ML预测 (/api/ml)
@@ -556,19 +370,6 @@ CREATE TABLE keywords (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- UP主表
-CREATE TABLE authors (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    author_id VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(100),
-    face_url VARCHAR(500),
-    follower_count INT DEFAULT 0,
-    video_count INT DEFAULT 0,
-    total_play INT DEFAULT 0,
-    cluster_label VARCHAR(50),  -- 聚类标签
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
 -- 采集日志表
 CREATE TABLE crawl_logs (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -593,7 +394,7 @@ CREATE TABLE crawl_logs (
 │  ads_hot_video_top100, ads_category_stats              │
 ├─────────────────────────────────────────────────────────┤
 │  DWS（汇总数据层）- 按日/周聚合                          │
-│  dws_video_daily, dws_category_daily, dws_author_daily │
+│  dws_video_daily, dws_category_daily                   │
 ├─────────────────────────────────────────────────────────┤
 │  DWD（明细数据层）- 清洗后标准数据                        │
 │  dwd_video, dwd_comment, dwd_danmaku                   │
@@ -612,18 +413,7 @@ CREATE TABLE crawl_logs (
 - **预测目标**：7天后播放量
 - **模型文件**：ml/models/xgboost_model.pkl
 
-### 2. UP主聚类画像（K-Means）
-- **输入特征**：avg_play, avg_like, video_count, update_freq
-- **聚类数量**：5类
-- **标签含义**：
-  - 高产型：更新频繁，播放稳定
-  - 爆款型：更新少但单个播放高
-  - 稳定型：粉丝多，数据稳定
-  - 新人型：粉丝少，视频少
-  - 沉寂型：很久不更新
-- **模型文件**：ml/models/kmeans_model.pkl
-
-### 3. 内容推荐（TF-IDF）
+### 2. 内容推荐（TF-IDF）
 - **方法**：基于视频标题的TF-IDF向量余弦相似度
 - **模型文件**：ml/models/tfidf_vectorizer.pkl
 
@@ -676,7 +466,6 @@ spark-submit spark_streaming.py
 ```bash
 cd ml
 python train_xgboost.py      # 训练热度预测模型
-python train_kmeans.py       # 训练UP主聚类模型
 ```
 
 ### 直播弹幕功能测试
@@ -725,43 +514,14 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 
 ## bilibili-api-python 使用指南
 
-### 概述
-`bilibili-api-python` 是连接B站直播弹幕的核心库，用于实时监听直播间弹幕、礼物等事件。
-
-**官方文档**：https://nemo2011.github.io/bilibili-api/
-**GitHub**：https://github.com/Nemo2011/bilibili-api
-
 ### 安装
 
 ```bash
-# 安装主库
 pip install bilibili-api-python==17.4.1
-
-# 必须安装一个异步HTTP客户端（三选一）
-pip install aiohttp      # 推荐，支持WebSocket
-pip install httpx        # 轻量，不支持WebSocket
-pip install curl_cffi    # 最强TLS指纹伪装，抗风控
+pip install aiohttp      # 必须，支持WebSocket
 ```
-
-**优先级**：`curl_cffi` > `aiohttp` > `httpx`
 
 **重要**：`httpx` 不支持 WebSocket，直播弹幕功能必须使用 `aiohttp` 或 `curl_cffi`
-
-### 请求客户端选择
-
-```python
-from bilibili_api import select_client, request_settings
-
-# 选择客户端
-select_client("aiohttp")      # 推荐用于直播弹幕
-select_client("curl_cffi")    # 抗风控场景
-
-# curl_cffi 浏览器指纹伪装（可选）
-request_settings.set("impersonate", "chrome131")
-
-# 设置代理（可选，遇到412错误时使用）
-request_settings.set_proxy("http://127.0.0.1:7890")
-```
 
 ### 直播弹幕监听
 
@@ -786,25 +546,6 @@ async def on_gift(event):
 
 # 启动连接
 sync(room.connect())
-
-# 或使用 asyncio
-import asyncio
-asyncio.run(room.connect())
-```
-
-### 获取直播间信息（需要登录凭据）
-
-```python
-from bilibili_api import live, Credential, sync
-
-credential = Credential(
-    sessdata="xxx",    # Cookie中的SESSDATA
-    bili_jct="xxx",    # Cookie中的bili_jct
-    buvid3="xxx"       # Cookie中的buvid3
-)
-
-room = live.LiveRoom(房间号, credential=credential)
-info = sync(room.get_room_info())
 ```
 
 ### 常用事件类型
@@ -815,24 +556,20 @@ info = sync(room.get_room_info())
 | `SEND_GIFT` | 礼物赠送 |
 | `INTERACT_WORD` | 用户进入直播间 |
 | `LIKE_INFO_V3_CLICK` | 用户点赞 |
-| `STOP_LIVE_ROOM_LIST` | 停播房间列表 |
-| `LOG_IN_NOTICE` | 登录提示 |
 
 ### 注意事项
 
-1. **WebSocket 支持**：仅 `aiohttp` 和 `curl_cffi` 支持，`httpx` 不支持
-2. **412 错误**：表示IP被限流，需要配置代理或等待
-3. **登录凭据**：部分API需要登录才能使用（如获取用户昵称）
-4. **房间号**：支持短号和真实房间号，库会自动转换
-5. **异步设计**：库全部使用 async/await，需要配合 asyncio 使用
+1. **412 错误**：表示IP被限流，需要配置代理或等待
+2. **房间号**：支持短号和真实房间号，库会自动转换
+3. **异步设计**：库全部使用 async/await，需要配合 asyncio 使用
 
 ### 测试脚本
 
-项目已包含测试脚本 `backend/test_bilibili_live.py`：
+项目已包含测试脚本 `backend/test_websocket.py`：
 
 ```bash
 cd backend
-python test_bilibili_live.py <直播间ID> --client aiohttp
+python test_websocket.py <直播间ID>
 ```
 
 ---
@@ -840,17 +577,16 @@ python test_bilibili_live.py <直播间ID> --client aiohttp
 ## 待实现功能清单
 
 ### 前端页面
+- [ ] Login.vue - 登录页面
+- [ ] Register.vue - 注册页面
 - [ ] Home.vue - 首页仪表盘
 - [ ] Videos.vue - 视频数据查询
 - [ ] Comments.vue - 评论分析
 - [ ] Keywords.vue - 热词分析
-- [ ] Trends.vue - 趋势分析
-- [ ] Authors.vue - UP主分析
 - [ ] Live.vue - 直播弹幕分析
 - [ ] Prediction.vue - ML预测
 - [ ] Admin.vue - 管理员后台
 - [ ] Profile.vue - 个人中心
-- [ ] Register.vue - 注册页面
 
 ### 后端功能
 - [ ] 完善统计分析API
@@ -869,7 +605,7 @@ python test_bilibili_live.py <直播间ID> --client aiohttp
 
 1. **实时流处理架构**：Kafka + Spark Streaming，实现秒级数据处理
 2. **数据仓库分层设计**：ODS→DWD→DWS→ADS 四层架构
-3. **机器学习应用**：热度预测 + UP主聚类 + 内容推荐
+3. **机器学习应用**：热度预测 + 内容推荐
 4. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
 5. **多维度分析**：播放量、互动率、情感等多指标综合分析
 6. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
