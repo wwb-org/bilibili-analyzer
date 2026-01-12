@@ -56,10 +56,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bilibili-analyzer/
 ├── frontend/                   # Vue3 前端项目
 │   ├── src/
-│   │   ├── views/              # 页面组件（10个页面）
-│   │   ├── components/         # 公共组件
+│   │   ├── views/              # 页面组件（已实现2个）
+│   │   │   ├── Login.vue       # 登录页面（完成）
+│   │   │   └── Dashboard.vue   # 首页仪表盘（框架）
+│   │   ├── components/         # 公共组件（空）
 │   │   ├── api/                # API请求封装
-│   │   ├── store/              # Pinia状态管理
+│   │   │   ├── index.js        # Axios实例
+│   │   │   └── auth.js         # 认证API
+│   │   ├── store/              # Pinia状态管理（空）
 │   │   ├── router/             # Vue Router路由
 │   │   ├── App.vue
 │   │   └── main.js
@@ -88,11 +92,12 @@ bilibili-analyzer/
 │   │   │   └── scheduler.py    # ETL调度器
 │   │   ├── services/           # 业务服务
 │   │   │   ├── crawler.py      # B站数据采集
+│   │   │   ├── crawl_service.py # 采集服务层
 │   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
 │   │   │   ├── live_client.py  # B站直播弹幕客户端封装
 │   │   │   └── analyzer.py     # 数据分析
 │   │   └── tasks/              # 定时任务
-│   │       └── scheduler.py    # APScheduler
+│   │       └── scheduler.py    # 采集定时调度
 │   ├── tests/                  # 测试脚本目录
 │   │   ├── test_etl.py         # ETL 测试脚本
 │   │   ├── test_websocket.py   # WebSocket 测试脚本
@@ -100,29 +105,17 @@ bilibili-analyzer/
 │   ├── main.py                 # 应用入口
 │   └── requirements.txt
 │
-├── streaming/                  # Kafka + Spark Streaming
-│   ├── kafka_producer.py       # Kafka生产者
-│   ├── spark_streaming.py      # Spark流处理
-│   └── config.py
-│
-├── data_warehouse/             # 数据仓库ETL
-│   ├── ods/                    # 原始数据层
-│   ├── dwd/                    # 明细数据层
-│   ├── dws/                    # 汇总数据层
-│   ├── ads/                    # 应用数据层
-│   └── etl_scheduler.py        # ETL调度
-│
-├── ml/                         # 机器学习模块
-│   ├── train_xgboost.py        # 热度预测训练
-│   ├── similarity.py           # TF-IDF相似度推荐
-│   └── models/                 # 训练好的模型文件
-│
 ├── docs/                       # 文档
 │   └── database.sql            # 数据库初始化脚本
 │
 ├── CLAUDE.md                   # 项目说明（本文件）
 └── README.md
 ```
+
+**注意：以下目录在文档中规划但尚未创建：**
+- `streaming/` - Kafka + Spark Streaming（待实现）
+- `ml/` - 机器学习模块（待实现）
+- `data_warehouse/` - 已集成到 `backend/app/etl/`
 
 ---
 
@@ -638,40 +631,55 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ---
 
-## 待实现功能清单
+## 功能完成情况
 
-### 前端页面
-- [ ] Login.vue - 登录页面
-- [ ] Register.vue - 注册页面
-- [ ] Home.vue - 首页仪表盘
-- [ ] Videos.vue - 视频数据查询
-- [ ] Comments.vue - 评论分析
-- [ ] Keywords.vue - 热词分析
-- [ ] Live.vue - 直播弹幕分析
-- [ ] Prediction.vue - ML预测
-- [ ] Admin.vue - 管理员后台
-- [ ] Profile.vue - 个人中心
+### 前端页面（2/10 完成）
+- [x] Login.vue - 登录页面（完整实现）
+- [ ] Register.vue - 注册页面（未实现）
+- [x] Dashboard.vue - 首页仪表盘（框架完成，图表待实现）
+- [ ] Videos.vue - 视频数据查询（未实现）
+- [ ] Comments.vue - 评论分析（未实现）
+- [ ] Keywords.vue - 热词分析（未实现）
+- [ ] Live.vue - 直播弹幕分析（未实现）
+- [ ] Prediction.vue - ML预测（未实现）
+- [ ] Admin.vue - 管理员后台（未实现）
+- [ ] Profile.vue - 个人中心（未实现）
 
-### 后端功能
-- [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
-- [x] 完善统计分析API（含数仓优化版本 /dw/* 接口）
+**前端其他模块：**
+- [x] API基础框架 (axios实例、拦截器)
+- [x] 认证API封装 (auth.js)
+- [ ] 其他API模块（videos, statistics, live, admin）
+- [ ] 状态管理 (Pinia store)
+- [ ] 公共组件
+
+### 后端功能（95% 完成）
+- [x] 用户认证API（注册、登录、JWT）
+- [x] 视频数据API（列表、详情、评论）
+- [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
+- [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
+- [x] NLP分析服务（情感分析、分词、词云）
 - [x] 数据仓库ETL模块（DWD + DWS 两层）
+- [x] ETL调度器（每日自动执行、手动触发、历史回填）
+- [x] 定时采集任务调度 (tasks/scheduler.py)
 - [ ] 数据导出功能
 - [ ] 直播数据持久化存储
+- [ ] 管理员采集控制接口（/crawl/start, /crawl/stop 仅有TODO）
 
 ### 大数据模块
-- [ ] streaming/ - Kafka + Spark Streaming
-- [x] data_warehouse/ - 数据仓库ETL（已集成到 backend/app/etl/）
-- [ ] ml/ - 机器学习模型训练
+- [x] 数据仓库ETL（已集成到 backend/app/etl/）
+- [ ] streaming/ - Kafka + Spark Streaming（目录不存在）
+- [ ] ml/ - 机器学习模型训练（目录不存在）
 
 ---
 
 ## 项目创新点
 
-1. **实时流处理架构**：Kafka + Spark Streaming，实现秒级数据处理
-2. **数据仓库分层设计**：ODS→DWD→DWS→ADS 四层架构
-3. **机器学习应用**：热度预测 + 内容推荐
-4. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
-5. **多维度分析**：播放量、互动率、情感等多指标综合分析
-6. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
+1. **数据仓库分层设计**：DWD→DWS 两层架构，预聚合优化查询性能
+2. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
+3. **多维度分析**：播放量、互动率、情感等多指标综合分析
+4. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
+
+### 待实现的创新点
+- Kafka + Spark Streaming 实时流处理
+- XGBoost热度预测 + TF-IDF内容推荐
