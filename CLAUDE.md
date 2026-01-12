@@ -71,15 +71,21 @@ bilibili-analyzer/
 │   │   ├── api/                # API路由
 │   │   │   ├── auth.py         # 用户认证
 │   │   │   ├── videos.py       # 视频数据
-│   │   │   ├── statistics.py   # 统计分析
-│   │   │   ├── admin.py        # 管理员功能
+│   │   │   ├── statistics.py   # 统计分析（含数仓优化接口）
+│   │   │   ├── admin.py        # 管理员功能（含ETL管理）
 │   │   │   └── live.py         # 直播弹幕分析 WebSocket
 │   │   ├── core/               # 核心配置
 │   │   │   ├── config.py       # 应用配置
 │   │   │   ├── database.py     # 数据库连接
 │   │   │   └── security.py     # JWT认证
 │   │   ├── models/             # 数据模型
-│   │   │   └── models.py       # SQLAlchemy模型
+│   │   │   ├── models.py       # SQLAlchemy模型
+│   │   │   └── warehouse.py    # 数仓模型（DWD/DWS层）
+│   │   ├── etl/                # 数据仓库ETL模块
+│   │   │   ├── base.py         # ETL基类
+│   │   │   ├── dwd_tasks.py    # DWD层ETL任务
+│   │   │   ├── dws_tasks.py    # DWS层ETL任务
+│   │   │   └── scheduler.py    # ETL调度器
 │   │   ├── services/           # 业务服务
 │   │   │   ├── crawler.py      # B站数据采集
 │   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
@@ -87,8 +93,11 @@ bilibili-analyzer/
 │   │   │   └── analyzer.py     # 数据分析
 │   │   └── tasks/              # 定时任务
 │   │       └── scheduler.py    # APScheduler
+│   ├── tests/                  # 测试脚本目录
+│   │   ├── test_etl.py         # ETL 测试脚本
+│   │   ├── test_websocket.py   # WebSocket 测试脚本
+│   │   └── test_crawl_service.py # 采集服务测试脚本
 │   ├── main.py                 # 应用入口
-│   ├── test_websocket.py       # WebSocket 测试脚本
 │   └── requirements.txt
 │
 ├── streaming/                  # Kafka + Spark Streaming
@@ -445,14 +454,55 @@ mysql -u root -p < docs/database.sql
 ### 数据采集
 ```bash
 cd backend
-python test_crawl_service.py    # 采集数据（带情感分析和日志）
-python 补充情感分析.py           # 对已有评论补充情感分析
+python tests/test_crawl_service.py    # 采集数据（带情感分析和日志）
+python 补充情感分析.py                 # 对已有评论补充情感分析
 ```
 
 **采集配置：**
 - 每个视频采集 100 条评论
 - 采集间隔 2 秒（符合B站API限制）
 - 建议每天运行 1-2 次
+
+### 数据仓库ETL
+```bash
+cd backend
+
+# 测试ETL执行
+python tests/test_etl.py
+
+# 通过API手动触发ETL（需要管理员权限）
+# POST /api/admin/etl/run-sync
+# Body: {"stat_date": "2026-01-11"}  # 可选，默认昨日
+
+# 历史数据回填
+# POST /api/admin/etl/backfill
+# Body: {"start_date": "2026-01-01", "end_date": "2026-01-10"}
+```
+
+**ETL调度：**
+- 自动调度：每天凌晨2点自动执行
+- 手动触发：通过 `/api/admin/etl/run` 或 `/api/admin/etl/run-sync`
+- 历史回填：通过 `/api/admin/etl/backfill`，最多90天
+
+**数仓表说明：**
+| 表名 | 层级 | 用途 |
+|------|------|------|
+| dwd_video_snapshot | DWD | 视频每日快照，保留历史统计数据 |
+| dwd_comment_daily | DWD | 评论每日增量，含情感标签 |
+| dws_stats_daily | DWS | 每日全局统计（视频数、播放量等） |
+| dws_category_daily | DWS | 每日分区统计 |
+| dws_sentiment_daily | DWS | 每日情感分布统计 |
+| dws_video_trend | DWS | 视频热度趋势（7日增长率） |
+
+**优化接口：**
+| 接口 | 说明 |
+|------|------|
+| GET /api/statistics/dw/overview | 总览统计（数仓优化版） |
+| GET /api/statistics/dw/trends | 趋势数据（数仓优化版） |
+| GET /api/statistics/dw/categories | 分区统计（数仓优化版） |
+| GET /api/statistics/dw/sentiment | 情感统计（数仓优化版） |
+| GET /api/statistics/dw/video-trends | 视频热度排行 |
+| GET /api/statistics/dw/video/{bvid}/history | 单视频历史趋势 |
 
 ### Kafka（本地单节点）
 ```bash
@@ -488,8 +538,8 @@ cd backend
 python main.py
 
 # 2. 新终端运行 WebSocket 测试
-python test_websocket.py <直播间ID>
-# 示例: python test_websocket.py 22625027
+python tests/test_websocket.py <直播间ID>
+# 示例: python tests/test_websocket.py 22625027
 
 # 测试输出说明:
 # [弹幕][+0.75] 用户名: 弹幕内容   (+正面 =中性 -负面)
@@ -577,11 +627,13 @@ sync(room.connect())
 
 ### 测试脚本
 
-项目已包含测试脚本 `backend/test_websocket.py`：
+项目已包含测试脚本目录 `backend/tests/`：
 
 ```bash
 cd backend
-python test_websocket.py <直播间ID>
+python tests/test_websocket.py <直播间ID>   # WebSocket 测试
+python tests/test_etl.py                    # ETL 测试
+python tests/test_crawl_service.py          # 采集服务测试
 ```
 
 ---
@@ -602,14 +654,15 @@ python test_websocket.py <直播间ID>
 
 ### 后端功能
 - [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
-- [ ] 完善统计分析API
+- [x] 完善统计分析API（含数仓优化版本 /dw/* 接口）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
+- [x] 数据仓库ETL模块（DWD + DWS 两层）
 - [ ] 数据导出功能
 - [ ] 直播数据持久化存储
 
 ### 大数据模块
 - [ ] streaming/ - Kafka + Spark Streaming
-- [ ] data_warehouse/ - 数据仓库ETL
+- [x] data_warehouse/ - 数据仓库ETL（已集成到 backend/app/etl/）
 - [ ] ml/ - 机器学习模型训练
 
 ---
