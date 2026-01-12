@@ -54,6 +54,7 @@ class Comment(Base):
     __tablename__ = "comments"
 
     id = Column(BigInteger, primary_key=True, index=True)
+    rpid = Column(BigInteger, unique=True, index=True)  # B站评论ID，用于去重
     video_id = Column(BigInteger, index=True, nullable=False)
     content = Column(Text, nullable=False)
     user_name = Column(String(100))

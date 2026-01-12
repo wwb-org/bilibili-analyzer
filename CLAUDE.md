@@ -442,6 +442,18 @@ npm run build                     # 构建生产版本
 mysql -u root -p < docs/database.sql
 ```
 
+### 数据采集
+```bash
+cd backend
+python test_crawl_service.py    # 采集数据（带情感分析和日志）
+python 补充情感分析.py           # 对已有评论补充情感分析
+```
+
+**采集配置：**
+- 每个视频采集 100 条评论
+- 采集间隔 2 秒（符合B站API限制）
+- 建议每天运行 1-2 次
+
 ### Kafka（本地单节点）
 ```bash
 # 启动 Zookeeper
@@ -589,6 +601,7 @@ python test_websocket.py <直播间ID>
 - [ ] Profile.vue - 个人中心
 
 ### 后端功能
+- [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
 - [ ] 完善统计分析API
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
 - [ ] 数据导出功能
