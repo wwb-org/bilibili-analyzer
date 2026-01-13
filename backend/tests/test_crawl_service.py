@@ -1,10 +1,14 @@
 """
 测试采集服务层（带情感分析）
+
+用法：
+    cd backend
+    python tests/test_crawl_service.py
 """
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.services.crawl_service import CrawlService
 
