@@ -1,45 +1,53 @@
 <template>
-  <div class="login-page page-bg-grid">
-    <!-- 登录区域 -->
-    <div class="card-container">
-      <!-- Logo区域 -->
-      <div class="logo-wrapper">
-        <img src="@/bilibili.svg" alt="Bilibili Logo" class="logo-img" />
+  <div class="login-page">
+    <!-- 左侧：瀑布流背景区域 -->
+    <div class="left-section">
+      <div class="brand-info">
+        <img src="@/bilibili.svg" alt="Logo" class="brand-logo" />
+        <h1 class="brand-title">B站视频趋势分析系统</h1>
+        <p class="brand-desc">基于大数据的视频内容趋势分析平台</p>
       </div>
-      <!-- 系统名称 -->
-      <h1 class="page-title">B站视频趋势分析系统</h1>
-      <!-- 登录表单 -->
-      <form class="login-form" @submit.prevent="handleLogin">
-        <div class="form-group">
-          <label class="form-label">用户名</label>
-          <input
-            type="text"
-            class="form-input"
-            v-model="form.username"
-            placeholder="请输入用户名"
-          />
-          <span class="form-error" v-if="errors.username">{{ errors.username }}</span>
-        </div>
-        <div class="form-group">
-          <label class="form-label">密码</label>
-          <input
-            type="password"
-            class="form-input"
-            v-model="form.password"
-            placeholder="请输入密码"
-          />
-          <span class="form-error" v-if="errors.password">{{ errors.password }}</span>
-        </div>
-        <button type="submit" class="btn-primary" :disabled="loading">
-          <span class="btn-spinner" v-if="loading"></span>
-          <span>{{ loading ? '登录中...' : '登录' }}</span>
-        </button>
-        <div class="form-footer">
-          <span>没有账号？</span>
-          <router-link to="/register" class="link-primary">立即注册</router-link>
-        </div>
-      </form>
     </div>
+
+    <!-- 右侧：登录表单区域 -->
+    <div class="right-section">
+      <div class="form-container">
+        <h2 class="form-title">欢迎回来</h2>
+        <p class="form-subtitle">请登录您的账号</p>
+
+        <form class="login-form" @submit.prevent="handleLogin">
+          <div class="form-group">
+            <label class="form-label">用户名</label>
+            <input
+              type="text"
+              class="form-input"
+              v-model="form.username"
+              placeholder="请输入用户名"
+            />
+            <span class="form-error" v-if="errors.username">{{ errors.username }}</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <input
+              type="password"
+              class="form-input"
+              v-model="form.password"
+              placeholder="请输入密码"
+            />
+            <span class="form-error" v-if="errors.password">{{ errors.password }}</span>
+          </div>
+          <button type="submit" class="btn-primary" :disabled="loading">
+            <span class="btn-spinner" v-if="loading"></span>
+            <span>{{ loading ? '登录中...' : '登录' }}</span>
+          </button>
+          <div class="form-footer">
+            <span>没有账号？</span>
+            <router-link to="/register" class="link-primary">立即注册</router-link>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- Toast提示 -->
     <Transition name="toast">
       <div class="toast" :class="toast.type" v-if="toast.show">
@@ -114,46 +122,83 @@ const handleLogin = async () => {
 </script>
 
 <style scoped>
-/* 页面背景 - 网格图案 */
+/* 页面容器 - 左右分栏 */
 .login-page {
   min-height: 100vh;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: var(--bg-gray-light);
-  background-image:
-    linear-gradient(var(--bg-gray-dark) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-gray-dark) 1px, transparent 1px);
-  background-size: 30px 30px;
 }
 
-/* 登录容器 */
-.card-container {
-  width: 480px;
-  padding: 40px 50px;
-  background-color: var(--bg-white);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-}
-
-/* Logo区域 */
-.logo-wrapper {
+/* 左侧区域 - 瀑布流背景 */
+.left-section {
+  flex: 7;
+  background-color: #141414;
+  background-image: url('/login-bg.jpg');
+  background-size: cover;
+  background-position: center;
+  position: relative;
   display: flex;
-  justify-content: center;
+  align-items: flex-start;
+  padding: 60px;
 }
 
-.logo-img {
-  width: 80px;
+.brand-info {
+  color: #fff;
+  z-index: 1;
+  padding: 28px 32px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.brand-logo {
+  width: 64px;
   height: auto;
+  margin-bottom: 20px;
 }
 
-/* 标题 */
-.page-title {
-  margin: 16px 0 32px 0;
-  text-align: center;
-  font-size: 22px;
+.brand-title {
+  font-size: 32px;
   font-weight: 600;
-  color: var(--text-primary);
+  margin: 0 0 12px 0;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.brand-desc {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* 右侧区域 - 登录表单 */
+.right-section {
+  flex: 3;
+  min-width: 420px;
+  background-color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.form-container {
+  width: 100%;
+  max-width: 360px;
+}
+
+.form-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0 0 8px 0;
+}
+
+.form-subtitle {
+  font-size: 14px;
+  color: #666;
+  margin: 0 0 32px 0;
 }
 
 /* 表单组 */
