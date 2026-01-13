@@ -1,24 +1,34 @@
 <template>
-  <div class="login-page page-bg-grid">
-    <!-- 登录区域 -->
+  <div class="register-page">
+    <!-- 注册区域 -->
     <div class="card-container">
       <!-- Logo区域 -->
       <div class="logo-wrapper">
         <img src="@/bilibili.svg" alt="Bilibili Logo" class="logo-img" />
       </div>
       <!-- 系统名称 -->
-      <h1 class="page-title">B站视频趋势分析系统</h1>
-      <!-- 登录表单 -->
-      <form class="login-form" @submit.prevent="handleLogin">
+      <h1 class="page-title">用户注册</h1>
+      <!-- 注册表单 -->
+      <form class="register-form" @submit.prevent="handleRegister">
         <div class="form-group">
           <label class="form-label">用户名</label>
           <input
             type="text"
             class="form-input"
             v-model="form.username"
-            placeholder="请输入用户名"
+            placeholder="请输入用户名（3-20个字符）"
           />
           <span class="form-error" v-if="errors.username">{{ errors.username }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">邮箱</label>
+          <input
+            type="email"
+            class="form-input"
+            v-model="form.email"
+            placeholder="请输入邮箱"
+          />
+          <span class="form-error" v-if="errors.email">{{ errors.email }}</span>
         </div>
         <div class="form-group">
           <label class="form-label">密码</label>
@@ -26,17 +36,27 @@
             type="password"
             class="form-input"
             v-model="form.password"
-            placeholder="请输入密码"
+            placeholder="请输入密码（至少6位）"
           />
           <span class="form-error" v-if="errors.password">{{ errors.password }}</span>
         </div>
+        <div class="form-group">
+          <label class="form-label">确认密码</label>
+          <input
+            type="password"
+            class="form-input"
+            v-model="form.confirmPassword"
+            placeholder="请再次输入密码"
+          />
+          <span class="form-error" v-if="errors.confirmPassword">{{ errors.confirmPassword }}</span>
+        </div>
         <button type="submit" class="btn-primary" :disabled="loading">
           <span class="btn-spinner" v-if="loading"></span>
-          <span>{{ loading ? '登录中...' : '登录' }}</span>
+          <span>{{ loading ? '注册中...' : '注册' }}</span>
         </button>
         <div class="form-footer">
-          <span>没有账号？</span>
-          <router-link to="/register" class="link-primary">立即注册</router-link>
+          <span>已有账号？</span>
+          <router-link to="/login" class="link-primary">立即登录</router-link>
         </div>
       </form>
     </div>
@@ -52,19 +72,23 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { login } from '@/api/auth'
+import request from '@/api'
 
 const router = useRouter()
 const loading = ref(false)
 
 const form = reactive({
   username: '',
-  password: ''
+  email: '',
+  password: '',
+  confirmPassword: ''
 })
 
 const errors = reactive({
   username: '',
-  password: ''
+  email: '',
+  password: '',
+  confirmPassword: ''
 })
 
 const toast = reactive({
@@ -82,31 +106,71 @@ const showToast = (message, type = 'success') => {
   }, 3000)
 }
 
-const validateField = (field) => {
-  if (field === 'username') {
-    errors.username = form.username.trim() ? '' : '请输入用户名'
-  } else if (field === 'password') {
-    errors.password = form.password ? '' : '请输入密码'
-  }
-}
-
 const validateForm = () => {
-  validateField('username')
-  validateField('password')
-  return !errors.username && !errors.password
+  let valid = true
+
+  // 用户名验证
+  if (!form.username.trim()) {
+    errors.username = '请输入用户名'
+    valid = false
+  } else if (form.username.length < 3 || form.username.length > 20) {
+    errors.username = '用户名长度在3-20个字符'
+    valid = false
+  } else {
+    errors.username = ''
+  }
+
+  // 邮箱验证
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!form.email.trim()) {
+    errors.email = '请输入邮箱'
+    valid = false
+  } else if (!emailRegex.test(form.email)) {
+    errors.email = '请输入正确的邮箱格式'
+    valid = false
+  } else {
+    errors.email = ''
+  }
+
+  // 密码验证
+  if (!form.password) {
+    errors.password = '请输入密码'
+    valid = false
+  } else if (form.password.length < 6) {
+    errors.password = '密码长度不能少于6位'
+    valid = false
+  } else {
+    errors.password = ''
+  }
+
+  // 确认密码验证
+  if (!form.confirmPassword) {
+    errors.confirmPassword = '请再次输入密码'
+    valid = false
+  } else if (form.confirmPassword !== form.password) {
+    errors.confirmPassword = '两次输入的密码不一致'
+    valid = false
+  } else {
+    errors.confirmPassword = ''
+  }
+
+  return valid
 }
 
-const handleLogin = async () => {
+const handleRegister = async () => {
   if (!validateForm()) return
 
   loading.value = true
   try {
-    const res = await login(form)
-    localStorage.setItem('token', res.access_token)
-    showToast('登录成功', 'success')
-    setTimeout(() => router.push('/'), 500)
+    await request.post('/api/auth/register', {
+      username: form.username,
+      email: form.email,
+      password: form.password
+    })
+    showToast('注册成功，请登录', 'success')
+    setTimeout(() => router.push('/login'), 500)
   } catch (error) {
-    showToast(error.response?.data?.detail || '登录失败', 'error')
+    showToast(error.response?.data?.detail || '注册失败', 'error')
   } finally {
     loading.value = false
   }
@@ -115,7 +179,7 @@ const handleLogin = async () => {
 
 <style scoped>
 /* 页面背景 - 网格图案 */
-.login-page {
+.register-page {
   min-height: 100vh;
   display: flex;
   justify-content: center;
@@ -127,7 +191,7 @@ const handleLogin = async () => {
   background-size: 30px 30px;
 }
 
-/* 登录容器 */
+/* 注册容器 */
 .card-container {
   width: 480px;
   padding: 40px 50px;
@@ -149,7 +213,7 @@ const handleLogin = async () => {
 
 /* 标题 */
 .page-title {
-  margin: 16px 0 32px 0;
+  margin: 16px 0 24px 0;
   text-align: center;
   font-size: 22px;
   font-weight: 600;
@@ -158,7 +222,7 @@ const handleLogin = async () => {
 
 /* 表单组 */
 .form-group {
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .form-label {

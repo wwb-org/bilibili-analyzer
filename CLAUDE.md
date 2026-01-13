@@ -521,6 +521,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
    - 正面：score > 0.6
    - 中性：0.4 ≤ score ≤ 0.6
    - 负面：score < 0.4
+6. 前端开发时，严格遵循前端项目文件夹中的 STYLE_RULE.md 文件中的规范
 
 ---
 
