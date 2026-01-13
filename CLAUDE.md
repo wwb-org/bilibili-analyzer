@@ -13,10 +13,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **项目定位**：一个具有大数据专业特色的数据分析系统，采用前后端分离架构，支持B站视频数据采集、实时流处理、数据仓库、机器学习分析和可视化展示。
 
 **核心特色**：
-1. Kafka + Spark Streaming 实时流处理
-2. ODS→DWD→DWS→ADS 数据仓库分层设计
-3. XGBoost热度预测 + TF-IDF内容推荐
-4. 实时直播弹幕分析（亮点功能）
+1. DWD→DWS 轻量级数据仓库分层设计
+2. 实时直播弹幕分析（WebSocket + NLP）
+3. 视频数据采集与情感分析
+4. 前后端分离架构 + 用户权限管理
+
+**待实现特色**：
+- Kafka + Spark Streaming 实时流处理
+- XGBoost热度预测 + TF-IDF内容推荐
 
 ---
 
@@ -56,10 +60,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bilibili-analyzer/
 ├── frontend/                   # Vue3 前端项目
 │   ├── src/
-│   │   ├── views/              # 页面组件（10个页面）
-│   │   ├── components/         # 公共组件
+│   │   ├── views/              # 页面组件（已实现2个）
+│   │   │   ├── Login.vue       # 登录页面（完成）
+│   │   │   └── Dashboard.vue   # 首页仪表盘（框架）
+│   │   ├── components/         # 公共组件（空）
 │   │   ├── api/                # API请求封装
-│   │   ├── store/              # Pinia状态管理
+│   │   │   ├── index.js        # Axios实例
+│   │   │   └── auth.js         # 认证API
+│   │   ├── store/              # Pinia状态管理（空）
 │   │   ├── router/             # Vue Router路由
 │   │   ├── App.vue
 │   │   └── main.js
@@ -71,42 +79,35 @@ bilibili-analyzer/
 │   │   ├── api/                # API路由
 │   │   │   ├── auth.py         # 用户认证
 │   │   │   ├── videos.py       # 视频数据
-│   │   │   ├── statistics.py   # 统计分析
-│   │   │   ├── admin.py        # 管理员功能
+│   │   │   ├── statistics.py   # 统计分析（含数仓优化接口）
+│   │   │   ├── admin.py        # 管理员功能（含ETL管理）
 │   │   │   └── live.py         # 直播弹幕分析 WebSocket
 │   │   ├── core/               # 核心配置
 │   │   │   ├── config.py       # 应用配置
 │   │   │   ├── database.py     # 数据库连接
 │   │   │   └── security.py     # JWT认证
 │   │   ├── models/             # 数据模型
-│   │   │   └── models.py       # SQLAlchemy模型
+│   │   │   ├── models.py       # SQLAlchemy模型
+│   │   │   └── warehouse.py    # 数仓模型（DWD/DWS层）
+│   │   ├── etl/                # 数据仓库ETL模块
+│   │   │   ├── base.py         # ETL基类
+│   │   │   ├── dwd_tasks.py    # DWD层ETL任务
+│   │   │   ├── dws_tasks.py    # DWS层ETL任务
+│   │   │   └── scheduler.py    # ETL调度器
 │   │   ├── services/           # 业务服务
 │   │   │   ├── crawler.py      # B站数据采集
+│   │   │   ├── crawl_service.py # 采集服务层
 │   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
 │   │   │   ├── live_client.py  # B站直播弹幕客户端封装
 │   │   │   └── analyzer.py     # 数据分析
 │   │   └── tasks/              # 定时任务
-│   │       └── scheduler.py    # APScheduler
+│   │       └── scheduler.py    # 采集定时调度
+│   ├── tests/                  # 测试脚本目录
+│   │   ├── test_etl.py         # ETL 测试脚本
+│   │   ├── test_websocket.py   # WebSocket 测试脚本
+│   │   └── test_crawl_service.py # 采集服务测试脚本
 │   ├── main.py                 # 应用入口
-│   ├── test_websocket.py       # WebSocket 测试脚本
 │   └── requirements.txt
-│
-├── streaming/                  # Kafka + Spark Streaming
-│   ├── kafka_producer.py       # Kafka生产者
-│   ├── spark_streaming.py      # Spark流处理
-│   └── config.py
-│
-├── data_warehouse/             # 数据仓库ETL
-│   ├── ods/                    # 原始数据层
-│   ├── dwd/                    # 明细数据层
-│   ├── dws/                    # 汇总数据层
-│   ├── ads/                    # 应用数据层
-│   └── etl_scheduler.py        # ETL调度
-│
-├── ml/                         # 机器学习模块
-│   ├── train_xgboost.py        # 热度预测训练
-│   ├── similarity.py           # TF-IDF相似度推荐
-│   └── models/                 # 训练好的模型文件
 │
 ├── docs/                       # 文档
 │   └── database.sql            # 数据库初始化脚本
@@ -114,6 +115,11 @@ bilibili-analyzer/
 ├── CLAUDE.md                   # 项目说明（本文件）
 └── README.md
 ```
+
+**注意：以下目录在文档中规划但尚未创建：**
+- `streaming/` - Kafka + Spark Streaming（待实现）
+- `ml/` - 机器学习模块（待实现）
+- `data_warehouse/` - 已集成到 `backend/app/etl/`
 
 ---
 
@@ -386,36 +392,50 @@ CREATE TABLE crawl_logs (
 
 ---
 
-## 数据仓库分层设计
+## 数据仓库分层设计（实际实现）
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  ADS（应用数据层）- 直接给前端用                          │
-│  ads_hot_video_top100, ads_category_stats              │
-├─────────────────────────────────────────────────────────┤
-│  DWS（汇总数据层）- 按日/周聚合                          │
-│  dws_video_daily, dws_category_daily                   │
-├─────────────────────────────────────────────────────────┤
-│  DWD（明细数据层）- 清洗后标准数据                        │
-│  dwd_video, dwd_comment, dwd_danmaku                   │
-├─────────────────────────────────────────────────────────┤
-│  ODS（原始数据层）- 原始JSON保留                         │
-│  ods_video_raw, ods_comment_raw, ods_danmaku_raw       │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ DWS层（汇总数据层）- 预聚合，直接供API查询                    │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐          │
+│ │dws_stats_    │ │dws_category_ │ │dws_sentiment_│          │
+│ │   daily      │ │   daily      │ │   daily      │          │
+│ │ 每日全局统计  │ │ 每日分区统计  │ │ 每日情感统计  │          │
+│ └──────────────┘ └──────────────┘ └──────────────┘          │
+│ ┌──────────────┐                                            │
+│ │dws_video_    │                                            │
+│ │   trend      │ 视频热度趋势                                │
+│ └──────────────┘                                            │
+├─────────────────────────────────────────────────────────────┤
+│ DWD层（明细数据层）- 清洗后的每日快照                         │
+│ ┌───────────────────┐ ┌───────────────────┐                 │
+│ │ dwd_video_snapshot│ │ dwd_comment_daily │                 │
+│ │ 视频每日快照       │ │ 评论每日增量       │                 │
+│ └───────────────────┘ └───────────────────┘                 │
+├─────────────────────────────────────────────────────────────┤
+│ ODS层（现有表作为数据源）                                     │
+│ ┌──────┐ ┌──────────┐ ┌──────────┐                          │
+│ │videos│ │ comments │ │ keywords │                          │
+│ └──────┘ └──────────┘ └──────────┘                          │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**说明**：实际采用轻量级两层设计（DWD + DWS），ODS层复用现有业务表。
 
 ---
 
-## 机器学习模型
+## 机器学习模型（待实现）
 
 ### 1. 视频热度预测（XGBoost）
 - **输入特征**：like_rate, coin_rate, publish_hour, category, title_length
 - **预测目标**：7天后播放量
-- **模型文件**：ml/models/xgboost_model.pkl
+- **模型文件**：ml/models/xgboost_model.pkl（待创建）
 
 ### 2. 内容推荐（TF-IDF）
 - **方法**：基于视频标题的TF-IDF向量余弦相似度
-- **模型文件**：ml/models/tfidf_vectorizer.pkl
+- **模型文件**：ml/models/tfidf_vectorizer.pkl（待创建）
+
+**注意**：ml/ 目录尚未创建，以上为规划设计。
 
 ---
 
@@ -445,14 +465,55 @@ mysql -u root -p < docs/database.sql
 ### 数据采集
 ```bash
 cd backend
-python test_crawl_service.py    # 采集数据（带情感分析和日志）
-python 补充情感分析.py           # 对已有评论补充情感分析
+python tests/test_crawl_service.py    # 采集数据（带情感分析和日志）
+python 补充情感分析.py                 # 对已有评论补充情感分析
 ```
 
 **采集配置：**
 - 每个视频采集 100 条评论
 - 采集间隔 2 秒（符合B站API限制）
 - 建议每天运行 1-2 次
+
+### 数据仓库ETL
+```bash
+cd backend
+
+# 测试ETL执行
+python tests/test_etl.py
+
+# 通过API手动触发ETL（需要管理员权限）
+# POST /api/admin/etl/run-sync
+# Body: {"stat_date": "2026-01-11"}  # 可选，默认昨日
+
+# 历史数据回填
+# POST /api/admin/etl/backfill
+# Body: {"start_date": "2026-01-01", "end_date": "2026-01-10"}
+```
+
+**ETL调度：**
+- 自动调度：每天凌晨2点自动执行
+- 手动触发：通过 `/api/admin/etl/run` 或 `/api/admin/etl/run-sync`
+- 历史回填：通过 `/api/admin/etl/backfill`，最多90天
+
+**数仓表说明：**
+| 表名 | 层级 | 用途 |
+|------|------|------|
+| dwd_video_snapshot | DWD | 视频每日快照，保留历史统计数据 |
+| dwd_comment_daily | DWD | 评论每日增量，含情感标签 |
+| dws_stats_daily | DWS | 每日全局统计（视频数、播放量等） |
+| dws_category_daily | DWS | 每日分区统计 |
+| dws_sentiment_daily | DWS | 每日情感分布统计 |
+| dws_video_trend | DWS | 视频热度趋势（7日增长率） |
+
+**优化接口：**
+| 接口 | 说明 |
+|------|------|
+| GET /api/statistics/dw/overview | 总览统计（数仓优化版） |
+| GET /api/statistics/dw/trends | 趋势数据（数仓优化版） |
+| GET /api/statistics/dw/categories | 分区统计（数仓优化版） |
+| GET /api/statistics/dw/sentiment | 情感统计（数仓优化版） |
+| GET /api/statistics/dw/video-trends | 视频热度排行 |
+| GET /api/statistics/dw/video/{bvid}/history | 单视频历史趋势 |
 
 ### Kafka（本地单节点）
 ```bash
@@ -488,8 +549,8 @@ cd backend
 python main.py
 
 # 2. 新终端运行 WebSocket 测试
-python test_websocket.py <直播间ID>
-# 示例: python test_websocket.py 22625027
+python tests/test_websocket.py <直播间ID>
+# 示例: python tests/test_websocket.py 22625027
 
 # 测试输出说明:
 # [弹幕][+0.75] 用户名: 弹幕内容   (+正面 =中性 -负面)
@@ -577,48 +638,66 @@ sync(room.connect())
 
 ### 测试脚本
 
-项目已包含测试脚本 `backend/test_websocket.py`：
+项目已包含测试脚本目录 `backend/tests/`：
 
 ```bash
 cd backend
-python test_websocket.py <直播间ID>
+python tests/test_websocket.py <直播间ID>   # WebSocket 测试
+python tests/test_etl.py                    # ETL 测试
+python tests/test_crawl_service.py          # 采集服务测试
 ```
 
 ---
 
-## 待实现功能清单
+## 功能完成情况
 
-### 前端页面
-- [ ] Login.vue - 登录页面
-- [ ] Register.vue - 注册页面
-- [ ] Home.vue - 首页仪表盘
-- [ ] Videos.vue - 视频数据查询
-- [ ] Comments.vue - 评论分析
-- [ ] Keywords.vue - 热词分析
-- [ ] Live.vue - 直播弹幕分析
-- [ ] Prediction.vue - ML预测
-- [ ] Admin.vue - 管理员后台
-- [ ] Profile.vue - 个人中心
+### 前端页面（2/10 完成）
+- [x] Login.vue - 登录页面（完整实现）
+- [ ] Register.vue - 注册页面（未实现）
+- [x] Dashboard.vue - 首页仪表盘（框架完成，图表待实现）
+- [ ] Videos.vue - 视频数据查询（未实现）
+- [ ] Comments.vue - 评论分析（未实现）
+- [ ] Keywords.vue - 热词分析（未实现）
+- [ ] Live.vue - 直播弹幕分析（未实现）
+- [ ] Prediction.vue - ML预测（未实现）
+- [ ] Admin.vue - 管理员后台（未实现）
+- [ ] Profile.vue - 个人中心（未实现）
 
-### 后端功能
-- [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
-- [ ] 完善统计分析API
+**前端其他模块：**
+- [x] API基础框架 (axios实例、拦截器)
+- [x] 认证API封装 (auth.js)
+- [ ] 其他API模块（videos, statistics, live, admin）
+- [ ] 状态管理 (Pinia store)
+- [ ] 公共组件
+
+### 后端功能（95% 完成）
+- [x] 用户认证API（注册、登录、JWT）
+- [x] 视频数据API（列表、详情、评论）
+- [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
+- [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
+- [x] NLP分析服务（情感分析、分词、词云）
+- [x] 数据仓库ETL模块（DWD + DWS 两层）
+- [x] ETL调度器（每日自动执行、手动触发、历史回填）
+- [x] 定时采集任务调度 (tasks/scheduler.py)
 - [ ] 数据导出功能
 - [ ] 直播数据持久化存储
+- [ ] 管理员采集控制接口（/crawl/start, /crawl/stop 仅有TODO）
 
 ### 大数据模块
-- [ ] streaming/ - Kafka + Spark Streaming
-- [ ] data_warehouse/ - 数据仓库ETL
-- [ ] ml/ - 机器学习模型训练
+- [x] 数据仓库ETL（已集成到 backend/app/etl/）
+- [ ] streaming/ - Kafka + Spark Streaming（目录不存在）
+- [ ] ml/ - 机器学习模型训练（目录不存在）
 
 ---
 
 ## 项目创新点
 
-1. **实时流处理架构**：Kafka + Spark Streaming，实现秒级数据处理
-2. **数据仓库分层设计**：ODS→DWD→DWS→ADS 四层架构
-3. **机器学习应用**：热度预测 + 内容推荐
-4. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
-5. **多维度分析**：播放量、互动率、情感等多指标综合分析
-6. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
+1. **数据仓库分层设计**：DWD→DWS 两层架构，预聚合优化查询性能
+2. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
+3. **多维度分析**：播放量、互动率、情感等多指标综合分析
+4. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
+
+### 待实现的创新点
+- Kafka + Spark Streaming 实时流处理
+- XGBoost热度预测 + TF-IDF内容推荐

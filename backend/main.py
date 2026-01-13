@@ -1,20 +1,54 @@
 """
 B站视频内容趋势分析系统 - 后端入口
 """
+from contextlib import asynccontextmanager
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth, videos, statistics, admin, live
 from app.core.config import settings
 from app.core.database import engine, Base
+from app.etl.scheduler import etl_scheduler
 
-# 创建数据库表
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# 创建数据库表（包括数仓表）
 Base.metadata.create_all(bind=engine)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    应用生命周期管理
+
+    启动时：启动ETL调度器
+    关闭时：停止ETL调度器
+    """
+    # 启动时执行
+    logger.info("应用启动中...")
+    etl_scheduler.start()
+    logger.info("ETL调度器已启动")
+
+    yield
+
+    # 关闭时执行
+    logger.info("应用关闭中...")
+    etl_scheduler.stop()
+    logger.info("ETL调度器已停止")
+
 
 app = FastAPI(
     title="B站视频内容趋势分析系统",
     description="基于B站数据的视频内容趋势分析API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS配置

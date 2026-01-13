@@ -2,7 +2,7 @@
 测试 WebSocket 端点
 用法:
   1. 先启动后端: python main.py
-  2. 再运行测试: python test_websocket.py <直播间ID>
+  2. 再运行测试: python tests/test_websocket.py <直播间ID>
 """
 import sys
 import asyncio
