@@ -48,6 +48,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PasswordChange(BaseModel):
+    old_password: str
+    new_password: str
+
+
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     """获取当前用户"""
     credentials_exception = HTTPException(
@@ -112,3 +117,31 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 def get_profile(current_user: User = Depends(get_current_user)):
     """获取当前用户信息"""
     return current_user
+
+
+@router.put("/password")
+def change_password(
+    data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """修改密码"""
+    # 验证旧密码
+    if not verify_password(data.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="旧密码错误"
+        )
+
+    # 验证新密码长度
+    if len(data.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="新密码长度不能少于6位"
+        )
+
+    # 更新密码
+    current_user.password_hash = get_password_hash(data.new_password)
+    db.commit()
+
+    return {"message": "密码修改成功"}
