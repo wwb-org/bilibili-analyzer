@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useUserStore } from '@/store/user'
 
 const routes = [
   {
@@ -31,12 +32,26 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
-  if (to.meta.requiresAuth && !token) {
-    next('/login')
+router.beforeEach(async (to, from, next) => {
+  const userStore = useUserStore()
+
+  if (to.meta.requiresAuth) {
+    if (!userStore.token) {
+      next('/login')
+    } else if (!userStore.user) {
+      // 验证token有效性
+      const valid = await userStore.checkAuth()
+      valid ? next() : next('/login')
+    } else {
+      next()
+    }
   } else {
-    next()
+    // 已登录用户访问登录/注册页时跳转到首页
+    if ((to.path === '/login' || to.path === '/register') && userStore.token) {
+      next('/')
+    } else {
+      next()
+    }
   }
 })
 

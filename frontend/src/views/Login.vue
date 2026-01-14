@@ -61,8 +61,10 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { login } from '@/api/auth'
+import { useUserStore } from '@/store/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 const loading = ref(false)
 
 const form = reactive({
@@ -110,7 +112,8 @@ const handleLogin = async () => {
   loading.value = true
   try {
     const res = await login(form)
-    localStorage.setItem('token', res.access_token)
+    userStore.setToken(res.access_token)
+    await userStore.fetchUser()
     showToast('登录成功', 'success')
     setTimeout(() => router.push('/'), 500)
   } catch (error) {

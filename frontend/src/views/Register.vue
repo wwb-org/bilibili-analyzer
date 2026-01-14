@@ -72,7 +72,7 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import request from '@/api'
+import { register } from '@/api/auth'
 
 const router = useRouter()
 const loading = ref(false)
@@ -162,7 +162,7 @@ const handleRegister = async () => {
 
   loading.value = true
   try {
-    await request.post('/api/auth/register', {
+    await register({
       username: form.username,
       email: form.email,
       password: form.password
