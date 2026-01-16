@@ -1,0 +1,34 @@
+/**
+ * B站风格公共颜色变量
+ * 配色体系：清爽、年轻、科技感、二次元友好
+ */
+
+:root {
+  /* 品牌色 */
+  --bili-blue: #00A1D6;
+  --bili-blue-hover: #00B5E5;
+  --bili-blue-light: #E3F6FB;
+  --bili-pink: #FB7299;
+  --bili-pink-hover: #FC8BAB;
+
+  /* 背景色 */
+  --bg-white: #FFFFFF;
+  --bg-gray-light: #FAFAFA;
+  --bg-gray: #F4F4F4;
+  --bg-gray-dark: #E7E7E7;
+
+  /* 文字色 */
+  --text-primary: #18191C;
+  --text-regular: #61666D;
+  --text-secondary: #9499A0;
+  --text-placeholder: #C9CCD0;
+
+  /* 边框色 */
+  --border-light: #E7E7E7;
+  --border-regular: #C9CCD0;
+
+  /* 功能色 */
+  --color-success: #00B578;
+  --color-error: #F56C6C;
+  --color-warning: #FF9736;
+}

@@ -67,7 +67,7 @@ app.include_router(statistics.router, prefix="/api/statistics", tags=["统计分
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
 app.include_router(live.router, prefix="/api/live", tags=["直播分析"])
 
-# test
+
 @app.get("/")
 async def root():
     return {"message": "B站视频内容趋势分析系统 API", "version": "1.0.0"}
