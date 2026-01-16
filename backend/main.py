@@ -67,7 +67,6 @@ app.include_router(statistics.router, prefix="/api/statistics", tags=["统计分
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
 app.include_router(live.router, prefix="/api/live", tags=["直播分析"])
 
-# test
 
 @app.get("/")
 async def root():
@@ -81,4 +80,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
