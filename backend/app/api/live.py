@@ -149,7 +149,7 @@ class LiveConnectionManager:
 
     async def _create_bili_client(self, room_id: int):
         """创建 B 站直播连接"""
-        client = BiliLiveClient(room_id, client="aiohttp")
+        client = BiliLiveClient(room_id, client="aiohttp", proxy="http://127.0.0.1:7897")
 
         # 注册回调
         client.on_danmaku(lambda msg: asyncio.create_task(
