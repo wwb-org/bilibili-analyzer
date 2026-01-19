@@ -14,6 +14,10 @@
  Date: 19/01/2026 21:08:46
 */
 
+CREATE DATABASE IF NOT EXISTS bilibili_analyzer DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+USE bilibili_analyzer;
+
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
