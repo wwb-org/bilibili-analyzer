@@ -1,65 +1,73 @@
 <template>
   <div class="register-page">
-    <!-- 注册区域 -->
-    <div class="card-container">
-      <!-- Logo区域 -->
-      <div class="logo-wrapper">
-        <img src="@/bilibili.svg" alt="Bilibili Logo" class="logo-img" />
+    <!-- 左侧：瀑布流背景区域 -->
+    <div class="left-section">
+      <div class="brand-info">
+        <img src="@/bilibili.svg" alt="Logo" class="brand-logo" />
+        <h1 class="brand-title">B站视频趋势分析系统</h1>
+        <p class="brand-desc">基于大数据的视频内容趋势分析平台</p>
       </div>
-      <!-- 系统名称 -->
-      <h1 class="page-title">用户注册</h1>
-      <!-- 注册表单 -->
-      <form class="register-form" @submit.prevent="handleRegister">
-        <div class="form-group">
-          <label class="form-label">用户名</label>
-          <input
-            type="text"
-            class="form-input"
-            v-model="form.username"
-            placeholder="请输入用户名（3-20个字符）"
-          />
-          <span class="form-error" v-if="errors.username">{{ errors.username }}</span>
-        </div>
-        <div class="form-group">
-          <label class="form-label">邮箱</label>
-          <input
-            type="email"
-            class="form-input"
-            v-model="form.email"
-            placeholder="请输入邮箱"
-          />
-          <span class="form-error" v-if="errors.email">{{ errors.email }}</span>
-        </div>
-        <div class="form-group">
-          <label class="form-label">密码</label>
-          <input
-            type="password"
-            class="form-input"
-            v-model="form.password"
-            placeholder="请输入密码（至少6位）"
-          />
-          <span class="form-error" v-if="errors.password">{{ errors.password }}</span>
-        </div>
-        <div class="form-group">
-          <label class="form-label">确认密码</label>
-          <input
-            type="password"
-            class="form-input"
-            v-model="form.confirmPassword"
-            placeholder="请再次输入密码"
-          />
-          <span class="form-error" v-if="errors.confirmPassword">{{ errors.confirmPassword }}</span>
-        </div>
-        <button type="submit" class="btn-primary" :disabled="loading">
-          <span class="btn-spinner" v-if="loading"></span>
-          <span>{{ loading ? '注册中...' : '注册' }}</span>
-        </button>
-        <div class="form-footer">
-          <span>已有账号？</span>
-          <router-link to="/login" class="link-primary">立即登录</router-link>
-        </div>
-      </form>
     </div>
+
+    <!-- 右侧：注册表单区域 -->
+    <div class="right-section">
+      <div class="form-container">
+        <h2 class="form-title">创建账号</h2>
+        <p class="form-subtitle">请填写注册信息</p>
+
+        <form class="register-form" @submit.prevent="handleRegister">
+          <div class="form-group">
+            <label class="form-label">用户名</label>
+            <input
+              type="text"
+              class="form-input"
+              v-model="form.username"
+              placeholder="请输入用户名（3-20个字符）"
+            />
+            <span class="form-error" v-if="errors.username">{{ errors.username }}</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">邮箱</label>
+            <input
+              type="email"
+              class="form-input"
+              v-model="form.email"
+              placeholder="请输入邮箱"
+            />
+            <span class="form-error" v-if="errors.email">{{ errors.email }}</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <input
+              type="password"
+              class="form-input"
+              v-model="form.password"
+              placeholder="请输入密码（至少6位）"
+            />
+            <span class="form-error" v-if="errors.password">{{ errors.password }}</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">确认密码</label>
+            <input
+              type="password"
+              class="form-input"
+              v-model="form.confirmPassword"
+              placeholder="请再次输入密码"
+            />
+            <span class="form-error" v-if="errors.confirmPassword">{{ errors.confirmPassword }}</span>
+          </div>
+          <button type="submit" class="btn-primary" :disabled="loading">
+            <span class="btn-spinner" v-if="loading"></span>
+            <span>{{ loading ? '注册中...' : '注册' }}</span>
+          </button>
+          <div class="form-footer">
+            <span>已有账号？</span>
+            <router-link to="/login" class="link-primary">立即登录</router-link>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- Toast提示 -->
     <Transition name="toast">
       <div class="toast" :class="toast.type" v-if="toast.show">
@@ -72,7 +80,7 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import request from '@/api'
+import { register } from '@/api/auth'
 
 const router = useRouter()
 const loading = ref(false)
@@ -162,7 +170,7 @@ const handleRegister = async () => {
 
   loading.value = true
   try {
-    await request.post('/api/auth/register', {
+    await register({
       username: form.username,
       email: form.email,
       password: form.password
@@ -178,51 +186,88 @@ const handleRegister = async () => {
 </script>
 
 <style scoped>
-/* 页面背景 - 网格图案 */
+/* 页面容器 - 左右分栏 */
 .register-page {
   min-height: 100vh;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: var(--bg-gray-light);
-  background-image:
-    linear-gradient(var(--bg-gray-dark) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-gray-dark) 1px, transparent 1px);
-  background-size: 30px 30px;
 }
 
-/* 注册容器 */
-.card-container {
-  width: 480px;
-  padding: 40px 50px;
-  background-color: var(--bg-white);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-}
-
-/* Logo区域 */
-.logo-wrapper {
+/* 左侧区域 - 瀑布流背景 */
+.left-section {
+  flex: 7;
+  background-color: #141414;
+  background-image: url('/login-bg.jpg');
+  background-size: cover;
+  background-position: center;
+  position: relative;
   display: flex;
-  justify-content: center;
+  align-items: flex-start;
+  padding: 60px;
 }
 
-.logo-img {
-  width: 80px;
+.brand-info {
+  color: #fff;
+  z-index: 1;
+  padding: 28px 32px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.brand-logo {
+  width: 64px;
   height: auto;
+  margin-bottom: 20px;
 }
 
-/* 标题 */
-.page-title {
-  margin: 16px 0 24px 0;
-  text-align: center;
-  font-size: 22px;
+.brand-title {
+  font-size: 32px;
   font-weight: 600;
-  color: var(--text-primary);
+  margin: 0 0 12px 0;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.brand-desc {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* 右侧区域 - 注册表单 */
+.right-section {
+  flex: 3;
+  min-width: 420px;
+  background-color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.form-container {
+  width: 100%;
+  max-width: 360px;
+}
+
+.form-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0 0 8px 0;
+}
+
+.form-subtitle {
+  font-size: 14px;
+  color: #666;
+  margin: 0 0 32px 0;
 }
 
 /* 表单组 */
 .form-group {
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .form-label {
