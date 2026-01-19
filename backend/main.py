@@ -72,7 +72,7 @@ app.include_router(live.router, prefix="/api/live", tags=["直播分析"])
 async def root():
     return {"message": "B站视频内容趋势分析系统 API", "version": "1.0.0"}
 
-
+# wwb test
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
