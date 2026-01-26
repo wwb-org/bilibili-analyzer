@@ -15,10 +15,11 @@ from app.services.crawl_service import CrawlService
 
 def main():
     print("="*60)
-    print("测试采集服务层（带情感分析和日志）")
+    print("测试采集服务层（带情感分析、日志和 Kafka）")
     print("="*60)
 
-    service = CrawlService()
+    # 启用 Kafka 实时流处理
+    service = CrawlService(enable_kafka=True)
 
     # 采集5个视频，每个视频50条评论
     # 这样可以快速测试情感分析功能

@@ -95,8 +95,9 @@ bilibili-analyzer/
 │   │   │   ├── dws_tasks.py    # DWS层ETL任务
 │   │   │   └── scheduler.py    # ETL调度器
 │   │   ├── services/           # 业务服务
-│   │   │   ├── crawler.py      # B站数据采集
+│   │   │   ├── crawler.py      # B站数据采集（已集成Kafka）
 │   │   │   ├── crawl_service.py # 采集服务层
+│   │   │   ├── kafka_producer.py # Kafka生产者
 │   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
 │   │   │   ├── live_client.py  # B站直播弹幕客户端封装
 │   │   │   └── analyzer.py     # 数据分析
@@ -105,20 +106,28 @@ bilibili-analyzer/
 │   ├── tests/                  # 测试脚本目录
 │   │   ├── test_etl.py         # ETL 测试脚本
 │   │   ├── test_websocket.py   # WebSocket 测试脚本
-│   │   └── test_crawl_service.py # 采集服务测试脚本
+│   │   ├── test_crawl_service.py # 采集服务测试脚本
+│   │   └── test_kafka_streaming.py # Kafka流处理测试脚本
 │   ├── main.py                 # 应用入口
 │   └── requirements.txt
+│
+├── streaming/                  # Spark Streaming 实时流处理
+│   ├── spark_streaming.py      # Spark Streaming 主程序
+│   └── requirements.txt        # Python依赖
 │
 ├── docs/                       # 文档
 │   └── database.sql            # 数据库初始化脚本
 │
+├── docker-compose.yml          # Docker Compose 配置
 ├── CLAUDE.md                   # 项目说明（本文件）
 └── README.md
 ```
 
 **注意：以下目录在文档中规划但尚未创建：**
-- `streaming/` - Kafka + Spark Streaming（待实现）
 - `ml/` - 机器学习模块（待实现）
+
+**已实现的目录：**
+- `streaming/` - Kafka + Spark Streaming（已实现）
 - `data_warehouse/` - 已集成到 `backend/app/etl/`
 
 ---
@@ -515,24 +524,44 @@ python tests/test_etl.py
 | GET /api/statistics/dw/video-trends | 视频热度排行 |
 | GET /api/statistics/dw/video/{bvid}/history | 单视频历史趋势 |
 
-### Kafka（本地单节点）
+### Kafka + Spark Streaming（Docker）
 ```bash
-# 启动 Zookeeper
-bin/zookeeper-server-start.sh config/zookeeper.properties
+# 启动所有服务（包括 Kafka 和 Spark）
+docker compose up -d
 
-# 启动 Kafka
-bin/kafka-server-start.sh config/server.properties
+# 查看服务状态
+docker compose ps
 
-# 创建Topic
-bin/kafka-topics.sh --create --topic video-topic --bootstrap-server localhost:9092
-bin/kafka-topics.sh --create --topic comment-topic --bootstrap-server localhost:9092
-bin/kafka-topics.sh --create --topic danmaku-topic --bootstrap-server localhost:9092
+# 创建 Kafka Topics（已通过 Docker 命令创建）
+docker exec bilibili-analyzer-kafka kafka-topics --create --topic video-topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+docker exec bilibili-analyzer-kafka kafka-topics --create --topic comment-topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+docker exec bilibili-analyzer-kafka kafka-topics --create --topic danmaku-topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+
+# 查看 Topics
+docker exec bilibili-analyzer-kafka kafka-topics --list --bootstrap-server localhost:9092
 ```
 
 ### Spark Streaming
 ```bash
-cd streaming
-spark-submit spark_streaming.py
+# 进入 Spark Master 容器
+docker exec -it -u root bilibili-analyzer-spark-master bash
+
+# 在容器内安装依赖
+pip install kafka-python pymysql sqlalchemy python-dotenv
+ln -s /usr/bin/python3 /usr/bin/python  # 创建 python 符号链接
+
+# 运行 Spark Streaming
+cd /opt/spark/streaming
+/opt/spark/bin/spark-submit \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,mysql:mysql-connector-java:8.0.33 \
+  spark_streaming.py
+
+# 测试数据流（在另一个终端）
+cd backend
+python tests/test_kafka_streaming.py  # 发送测试数据
+
+# 或运行真实数据采集（启用 Kafka）
+python tests/test_crawl_service.py  # 已集成 Kafka，会自动发送到 Kafka
 ```
 
 ### 机器学习模型训练
@@ -645,7 +674,8 @@ sync(room.connect())
 cd backend
 python tests/test_websocket.py <直播间ID>   # WebSocket 测试
 python tests/test_etl.py                    # ETL 测试
-python tests/test_crawl_service.py          # 采集服务测试
+python tests/test_crawl_service.py          # 采集服务测试（已集成Kafka）
+python tests/test_kafka_streaming.py        # Kafka流处理测试
 ```
 
 ---
@@ -681,13 +711,18 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 数据仓库ETL模块（DWD + DWS 两层）
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
+- [x] Kafka生产者模块（kafka_producer.py，集成到采集流程）
 - [ ] 数据导出功能
 - [ ] 直播数据持久化存储
 - [ ] 管理员采集控制接口（/crawl/start, /crawl/stop 仅有TODO）
 
 ### 大数据模块
 - [x] 数据仓库ETL（已集成到 backend/app/etl/）
-- [ ] streaming/ - Kafka + Spark Streaming（目录不存在）
+- [x] streaming/ - Kafka + Spark Streaming（已实现）
+  - [x] Kafka Topics 创建（video-topic, comment-topic, danmaku-topic）
+  - [x] Spark Streaming 主程序（spark_streaming.py）
+  - [x] Kafka 生产者集成到采集流程
+  - [x] 实时数据流处理和聚合
 - [ ] ml/ - 机器学习模型训练（目录不存在）
 
 ---

@@ -15,8 +15,8 @@ from app.core.database import SessionLocal
 class CrawlService:
     """采集服务"""
 
-    def __init__(self):
-        self.crawler = BilibiliCrawler()
+    def __init__(self, enable_kafka: bool = False):
+        self.crawler = BilibiliCrawler(enable_kafka=enable_kafka)
         self.nlp = NLPAnalyzer()
 
     def _get_sentiment_label(self, score: float) -> str:

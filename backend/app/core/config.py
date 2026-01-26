@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
+    # Kafka配置
+    KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+
     # B站Cookie（可选，用于获取更多数据）
     BILIBILI_COOKIE: str = ""
 

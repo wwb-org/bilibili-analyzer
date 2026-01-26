@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.models import Video, Comment
 from app.core.database import SessionLocal
+from app.services.kafka_producer import get_kafka_producer
 
 
 class BilibiliCrawler:
@@ -19,7 +20,7 @@ class BilibiliCrawler:
 
     BASE_URL = "https://api.bilibili.com"
 
-    def __init__(self, cookie: str = ""):
+    def __init__(self, cookie: str = "", enable_kafka: bool = False):
         self.session = requests.Session()
         self.session.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -27,6 +28,17 @@ class BilibiliCrawler:
         }
         if cookie:
             self.session.headers['Cookie'] = cookie
+
+        # Kafka 生产者（可选）
+        self.enable_kafka = enable_kafka
+        self.kafka_producer = None
+        if enable_kafka:
+            try:
+                self.kafka_producer = get_kafka_producer()
+                print("Kafka 生产者已启用")
+            except Exception as e:
+                print(f"Kafka 生产者初始化失败: {e}")
+                self.enable_kafka = False
 
     @staticmethod
     def rate_limit(interval: float = 2.0):
@@ -284,6 +296,21 @@ class BilibiliCrawler:
                         stats['videos_saved'] += 1
                         print(f"  [OK] 视频已保存: {video.title[:30]}")
 
+                        # 发送视频数据到 Kafka
+                        if self.enable_kafka and self.kafka_producer:
+                            try:
+                                kafka_video_data = {
+                                    'bvid': video.bvid,
+                                    'title': video.title,
+                                    'category': video.category,
+                                    'author_name': video.author_name,
+                                    'play_count': video.play_count,
+                                    'like_count': video.like_count,
+                                }
+                                self.kafka_producer.send_video_data(kafka_video_data)
+                            except Exception as e:
+                                print(f"  [WARN] Kafka 发送失败: {e}")
+
                         # 获取并保存评论
                         oid = detail.get('aid')
                         if oid:
@@ -296,6 +323,20 @@ class BilibiliCrawler:
                                 if comments:
                                     count = self.save_comments(comments, video.id, db)
                                     stats['comments_saved'] += count
+
+                                    # 发送评论数据到 Kafka
+                                    if self.enable_kafka and self.kafka_producer:
+                                        for comment in comments:
+                                            try:
+                                                kafka_comment_data = {
+                                                    'video_id': video.id,
+                                                    'content': comment.get('content', ''),
+                                                    'user_name': comment.get('member', {}).get('uname', ''),
+                                                    'sentiment_score': comment.get('sentiment_score', 0.5),
+                                                }
+                                                self.kafka_producer.send_comment_data(kafka_comment_data)
+                                            except Exception as e:
+                                                pass  # 静默失败，不影响采集
 
                             print(f"  [OK] 评论已保存: {stats['comments_saved']} 条")
 

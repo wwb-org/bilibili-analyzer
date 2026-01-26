@@ -20,6 +20,7 @@ from app.services.live_client import (
     InteractMessage,
 )
 from app.services.nlp import NLPAnalyzer
+from app.services.kafka_producer import get_kafka_producer
 
 router = APIRouter()
 
@@ -89,13 +90,15 @@ class LiveConnectionManager:
         # room_id -> BiliLiveClient B站连接
         self._clients: Dict[int, BiliLiveClient] = {}
         # room_id -> asyncio.Task 连接任务
-        self._tasks: Dict[int, asyncio.Task] = {}
+        self._tasks: Dict[int, asyncio.Task] =
         # room_id -> LiveRoomStats 统计数据
         self._stats: Dict[int, LiveRoomStats] = {}
         # room_id -> asyncio.Task 统计广播任务
         self._stats_tasks: Dict[int, asyncio.Task] = {}
         # NLP 分析器
         self._nlp = NLPAnalyzer()
+        # Kafka 生产者
+        self._kafka_producer = get_kafka_producer()
 
     async def connect(self, room_id: int, websocket: WebSocket):
         """用户连接到直播间"""
@@ -192,16 +195,21 @@ class LiveConnectionManager:
         if room_id in self._stats:
             self._stats[room_id].add_danmaku(msg.content, sentiment_score, sentiment_label)
 
+        # 发送到 Kafka
+        live_danmaku_data = {
+            "room_id": room_id,
+            "content": msg.content,
+            "user_name": msg.user_name,
+            "user_id": msg.user_id,
+            "timestamp": msg.timestamp.isoformat(),
+            "sentiment_score": round(sentiment_score, 3),
+            "sentiment_label": sentiment_label,
+        }
+        self._kafka_producer.send_live_danmaku_data(live_danmaku_data)
+
         message = {
             "type": "danmaku",
-            "data": {
-                "content": msg.content,
-                "user_name": msg.user_name,
-                "user_id": msg.user_id,
-                "timestamp": msg.timestamp.isoformat(),
-                "sentiment_score": round(sentiment_score, 3),
-                "sentiment_label": sentiment_label,
-            }
+            "data": live_danmaku_data
         }
         await self._broadcast(room_id, message)
 
