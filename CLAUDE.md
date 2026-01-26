@@ -60,14 +60,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bilibili-analyzer/
 ├── frontend/                   # Vue3 前端项目
 │   ├── src/
-│   │   ├── views/              # 页面组件（已实现2个）
+│   │   ├── views/              # 页面组件（已实现3个）
 │   │   │   ├── Login.vue       # 登录页面（完成）
-│   │   │   └── Dashboard.vue   # 首页仪表盘（框架）
+│   │   │   ├── Register.vue    # 注册页面（完成）
+│   │   │   └── VideoList.vue   # 视频列表页（基础列表+筛选）
 │   │   ├── components/         # 公共组件（空）
 │   │   ├── api/                # API请求封装
 │   │   │   ├── index.js        # Axios实例
 │   │   │   └── auth.js         # 认证API
-│   │   ├── store/              # Pinia状态管理（空）
+│   │   ├── store/              # Pinia状态管理
+│   │   │   └── user.js          # 用户状态
 │   │   ├── router/             # Vue Router路由
 │   │   ├── App.vue
 │   │   └── main.js
@@ -101,7 +103,7 @@ bilibili-analyzer/
 │   │   │   ├── live_client.py  # B站直播弹幕客户端封装
 │   │   │   └── analyzer.py     # 数据分析
 │   │   └── tasks/              # 定时任务
-│   │       └── scheduler.py    # 采集定时调度
+│   │       └── scheduler.py    # 采集定时调度（定时采集+热词更新）
 │   ├── tests/                  # 测试脚本目录
 │   │   ├── test_etl.py         # ETL 测试脚本
 │   │   ├── test_websocket.py   # WebSocket 测试脚本
@@ -143,7 +145,7 @@ bilibili-analyzer/
 | 1 | 登录 | Login.vue | 公开 | 用户登录 |
 | 2 | 注册 | Register.vue | 公开 | 用户注册 |
 | 3 | 首页仪表盘 | Home.vue | 用户 | 数据概览仪表盘 |
-| 4 | 视频数据 | Videos.vue | 用户 | 视频列表 + 单视频详情 |
+| 4 | 视频数据 | VideoList.vue | 用户 | 视频列表（已实现基础列表+筛选） |
 | 5 | 评论分析 | Comments.vue | 用户 | 全局评论聚合分析 |
 | 6 | 热词分析 | Keywords.vue | 用户 | 全局热词聚合分析 |
 | 7 | 直播分析 | Live.vue | 用户 | **实时弹幕分析（亮点）** |
@@ -159,9 +161,9 @@ bilibili-analyzer/
 - 分区分布饼图、热门视频TOP10、情感分析概览、今日热词云
 - 系统状态（仅管理员可见）
 
-#### 视频数据 (Videos.vue)
-- 视频列表：筛选（时间、分区、关键词）、分页、导出Excel
-- 视频详情弹窗：基础信息、评论列表（带情感标签）、情感分布饼图、热词词云
+#### 视频数据 (VideoList.vue)
+- 已实现：视频列表（关键词/分区筛选、分页、刷新）
+- 待实现：视频详情弹窗、导出Excel、更多筛选项
 
 #### 评论分析 (Comments.vue)
 - 筛选栏：时间范围、视频分区、情感类型、关键词搜索
@@ -196,14 +198,13 @@ bilibili-analyzer/
 
 ---
 
-## 后端API接口
+## 后端API接口（实际实现）
 
 ### 用户认证 (/api/auth)
 ```
 POST /register     # 用户注册
 POST /login        # 用户登录，返回JWT
 GET  /profile      # 获取当前用户信息
-PUT  /profile      # 更新用户信息
 PUT  /password     # 修改密码
 ```
 
@@ -211,7 +212,7 @@ PUT  /password     # 修改密码
 ```
 GET  /             # 视频列表（分页、筛选）
 GET  /{bvid}       # 视频详情
-GET  /{bvid}/comments  # 视频评论列表
+（未实现）/ {bvid}/comments  # 视频评论列表
 ```
 
 ### 统计分析 (/api/statistics)
@@ -290,20 +291,18 @@ GET  /rooms/{room_id}/status  # 获取直播间连接状态
 }
 ```
 
-### 数据导出 (/api/export)
+### 数据导出 (/api/export)（未实现）
 ```
-GET  /videos       # 导出视频数据Excel
-GET  /keywords     # 导出热词数据Excel
+GET  /videos       # 导出视频数据Excel（未实现）
+GET  /keywords     # 导出热词数据Excel（未实现）
 ```
 
 ### 管理员 (/api/admin)
 ```
 GET  /users           # 用户列表
-PUT  /users/{id}      # 修改用户状态/角色
 GET  /crawl/logs      # 采集日志
-POST /crawl/start     # 启动采集任务
-POST /crawl/stop      # 停止采集任务
-GET  /system/status   # 系统状态
+POST /crawl/start     # 启动采集任务（TODO）
+POST /crawl/stop      # 停止采集任务（未实现）
 ```
 
 ---
@@ -652,11 +651,11 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（2/10 完成）
+### 前端页面（3/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
-- [ ] Register.vue - 注册页面（未实现）
-- [x] Dashboard.vue - 首页仪表盘（框架完成，图表待实现）
-- [ ] Videos.vue - 视频数据查询（未实现）
+- [x] Register.vue - 注册页面（完整实现）
+- [ ] Home.vue - 首页仪表盘（未实现）
+- [x] VideoList.vue - 视频数据查询（基础列表+筛选）
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
 - [ ] Live.vue - 直播弹幕分析（未实现）
@@ -668,12 +667,13 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] API基础框架 (axios实例、拦截器)
 - [x] 认证API封装 (auth.js)
 - [ ] 其他API模块（videos, statistics, live, admin）
-- [ ] 状态管理 (Pinia store)
+- [x] 状态管理 (Pinia user store)
 - [ ] 公共组件
 
-### 后端功能（95% 完成）
+### 后端功能（约85% 完成）
 - [x] 用户认证API（注册、登录、JWT）
-- [x] 视频数据API（列表、详情、评论）
+- [x] 视频数据API（列表、详情）
+- [ ] 视频评论API（未实现）
 - [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
 - [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
@@ -681,9 +681,9 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 数据仓库ETL模块（DWD + DWS 两层）
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
-- [ ] 数据导出功能
+- [ ] 数据导出功能（未实现）
 - [ ] 直播数据持久化存储
-- [ ] 管理员采集控制接口（/crawl/start, /crawl/stop 仅有TODO）
+- [ ] 管理员采集控制接口（/crawl/start 仅有TODO，/crawl/stop 未实现）
 
 ### 大数据模块
 - [x] 数据仓库ETL（已集成到 backend/app/etl/）
