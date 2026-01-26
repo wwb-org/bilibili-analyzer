@@ -654,24 +654,37 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（4/10 完成）
+### 前端页面（5/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
 - [x] VideoList.vue - 视频数据查询（基础列表+筛选）
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
-- [ ] Live.vue - 直播弹幕分析（未实现）
+- [x] Live.vue - 直播弹幕分析（完整实现）
 - [ ] Prediction.vue - ML预测（未实现）
 - [ ] Admin.vue - 管理员后台（未实现）
 - [ ] Profile.vue - 个人中心（未实现）
 
+**Live.vue 功能详情：**
+- [x] WebSocket 实时连接 B站直播间
+- [x] 实时弹幕流（带情感分析标签）
+- [x] 统计卡片（弹幕数、速率、平均情感分、礼物数）
+- [x] 情感分布饼图
+- [x] 情感趋势折线图
+- [x] 实时词云（每10秒更新）
+- [x] 自动重连机制
+- [x] 响应式窗口适配
+
 **前端其他模块：**
 - [x] API基础框架 (axios实例、拦截器)
 - [x] 认证API封装 (auth.js)
-- [ ] 其他API模块（videos, statistics, live, admin）
+- [x] Live API封装 (live.js - WebSocket连接地址、HTTP接口)
+- [x] WebSocket工具类 (utils/websocket.js - 连接管理、事件分发、自动重连)
+- [ ] 其他API模块（videos, statistics, admin）
 - [x] 状态管理 (Pinia user store)
 - [x] 公共组件 (Layout)
+- [x] Vite配置（WebSocket代理支持）
 
 ### 后端功能（约85% 完成）
 - [x] 用户认证API（注册、登录、JWT）
@@ -685,8 +698,16 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
 - [ ] 数据导出功能（未实现）
-- [ ] 直播数据持久化存储
+- [ ] 直播数据持久化存储（可选扩展）
 - [ ] 管理员采集控制接口（/crawl/start 仅有TODO，/crawl/stop 未实现）
+
+**直播模块可选扩展功能：**
+- [ ] 在弹幕流中显示礼物消息（当前仅统计）
+- [ ] 在弹幕流中显示互动消息（进场、点赞）
+- [ ] 热门直播间推荐列表（后端接口已有）
+- [ ] 直播历史分析记录查询
+- [ ] 高频用户排行榜
+- [ ] 弹幕关键词提醒功能
 
 ### 大数据模块
 - [x] 数据仓库ETL（已集成到 backend/app/etl/）
