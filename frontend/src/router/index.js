@@ -13,10 +13,23 @@ const routes = [
     component: () => import('@/views/Register.vue')
   },
   {
-    path: '/videos',
-    name: 'VideoList',
-    component: () => import('@/views/VideoList.vue'),
-    meta: { requiresAuth: true }
+    path: '/',
+    component: () => import('@/components/common/Layout.vue'),
+    redirect: '/home',
+    children: [
+      {
+        path: 'home',
+        name: 'Home',
+        component: () => import('@/views/Home.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'videos',
+        name: 'VideoList',
+        component: () => import('@/views/VideoList.vue'),
+        meta: { requiresAuth: true }
+      }
+    ]
   }
 ]
 
@@ -42,7 +55,7 @@ router.beforeEach(async (to, from, next) => {
   } else {
     // 已登录用户访问登录/注册页时跳转到首页
     if ((to.path === '/login' || to.path === '/register') && userStore.token) {
-      next('/')
+      next('/home')
     } else {
       next()
     }
