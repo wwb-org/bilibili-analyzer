@@ -90,7 +90,7 @@ class LiveConnectionManager:
         # room_id -> BiliLiveClient B站连接
         self._clients: Dict[int, BiliLiveClient] = {}
         # room_id -> asyncio.Task 连接任务
-        self._tasks: Dict[int, asyncio.Task] =
+        self._tasks: Dict[int, asyncio.Task] = {}
         # room_id -> LiveRoomStats 统计数据
         self._stats: Dict[int, LiveRoomStats] = {}
         # room_id -> asyncio.Task 统计广播任务
