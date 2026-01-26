@@ -17,9 +17,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. 实时直播弹幕分析（WebSocket + NLP）
 3. 视频数据采集与情感分析
 4. 前后端分离架构 + 用户权限管理
+5. **Kafka + Spark Streaming 实时流处理（直播弹幕 → Kafka → Spark → Redis）**
 
 **待实现特色**：
-- Kafka + Spark Streaming 实时流处理
 - XGBoost热度预测 + TF-IDF内容推荐
 
 ---
@@ -42,13 +42,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | bilibili-api-python | B站直播弹幕连接 |
 
 ### 前端
-| 技术 | 用途 |
-|------|------|
-| Vue3 + Vite | 前端框架 |
-| Element Plus | UI组件库 |
+| 技术 | 用途     |
+|------|--------|
+| Vue3 + Vite | 前端框架   |
+| Element Plus | UI组件库  |
 | ECharts | 数据可视化图表 |
-| echarts-wordcloud | 词云图 |
-| Pinia | 状态管理 |
+| echarts-wordcloud | 词云图    |
+| Pinia | 状态管理   |
 | Axios | HTTP请求 |
 | WebSocket | 实时数据推送 |
 
@@ -85,7 +85,8 @@ bilibili-analyzer/
 │   │   ├── core/               # 核心配置
 │   │   │   ├── config.py       # 应用配置
 │   │   │   ├── database.py     # 数据库连接
-│   │   │   └── security.py     # JWT认证
+│   │   │   ├── security.py     # JWT认证
+│   │   │   └── redis_client.py # Redis客户端封装
 │   │   ├── models/             # 数据模型
 │   │   │   ├── models.py       # SQLAlchemy模型
 │   │   │   └── warehouse.py    # 数仓模型（DWD/DWS层）
@@ -107,7 +108,8 @@ bilibili-analyzer/
 │   │   ├── test_etl.py         # ETL 测试脚本
 │   │   ├── test_websocket.py   # WebSocket 测试脚本
 │   │   ├── test_crawl_service.py # 采集服务测试脚本
-│   │   └── test_kafka_streaming.py # Kafka流处理测试脚本
+│   │   ├── test_kafka_streaming.py # Kafka流处理测试脚本
+│   │   └── test_live_kafka_redis.py # 直播弹幕完整数据流测试
 │   ├── main.py                 # 应用入口
 │   └── requirements.txt
 │
@@ -587,6 +589,31 @@ python tests/test_websocket.py <直播间ID>
 # [词云] TOP10: 词1(频次) | 词2(频次)... (每10秒更新)
 ```
 
+### 直播弹幕 Kafka Redis 完整数据流测试
+```bash
+# 前置条件：
+# 1. Docker 服务已启动：docker compose up -d
+# 2. Spark Streaming 已启动（见上文 Spark Streaming 部分）
+
+cd backend
+
+# 运行完整数据流测试
+python tests/test_live_kafka_redis.py <直播间ID>
+# 示例: python tests/test_live_kafka_redis.py 115
+
+# 测试输出说明:
+# - 显示 Redis 和 Kafka 连接信息
+# - 实时显示弹幕（带情感分析）和 Kafka 发送状态
+# - 每10秒检查 Redis 中的统计数据和弹幕列表
+
+# 验证 Redis 数据（可选）
+docker exec -it bilibili-analyzer-redis redis-cli
+# 在 Redis CLI 中执行:
+# KEYS live:*
+# GET live:stats:<直播间ID>
+# LRANGE live:danmaku:<直播间ID> 0 4
+```
+
 ---
 
 ## 环境变量配置
@@ -701,7 +728,7 @@ python tests/test_kafka_streaming.py        # Kafka流处理测试
 - [ ] 状态管理 (Pinia store)
 - [ ] 公共组件
 
-### 后端功能（95% 完成）
+### 后端功能（98% 完成）
 - [x] 用户认证API（注册、登录、JWT）
 - [x] 视频数据API（列表、详情、评论）
 - [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
@@ -712,17 +739,19 @@ python tests/test_kafka_streaming.py        # Kafka流处理测试
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
 - [x] Kafka生产者模块（kafka_producer.py，集成到采集流程）
+- [x] Redis客户端模块（redis_client.py，直播弹幕数据存储）
+- [x] 直播弹幕数据持久化存储（Kafka → Spark → Redis）
 - [ ] 数据导出功能
-- [ ] 直播数据持久化存储
 - [ ] 管理员采集控制接口（/crawl/start, /crawl/stop 仅有TODO）
 
 ### 大数据模块
 - [x] 数据仓库ETL（已集成到 backend/app/etl/）
 - [x] streaming/ - Kafka + Spark Streaming（已实现）
-  - [x] Kafka Topics 创建（video-topic, comment-topic, danmaku-topic）
+  - [x] Kafka Topics 创建（video-topic, comment-topic, danmaku-topic, live-danmaku-topic）
   - [x] Spark Streaming 主程序（spark_streaming.py）
   - [x] Kafka 生产者集成到采集流程
   - [x] 实时数据流处理和聚合
+  - [x] 直播弹幕数据流（直播间 → Kafka → Spark → Redis）
 - [ ] ml/ - 机器学习模型训练（目录不存在）
 
 ---
