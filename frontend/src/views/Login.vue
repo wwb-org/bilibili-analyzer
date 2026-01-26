@@ -115,7 +115,7 @@ const handleLogin = async () => {
     userStore.setToken(res.access_token)
     await userStore.fetchUser()
     showToast('登录成功', 'success')
-    setTimeout(() => router.push('/'), 500)
+    setTimeout(() => router.push('/home'), 500)
   } catch (error) {
     showToast(error.response?.data?.detail || '登录失败', 'error')
   } finally {

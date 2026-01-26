@@ -60,11 +60,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bilibili-analyzer/
 ├── frontend/                   # Vue3 前端项目
 │   ├── src/
-│   │   ├── views/              # 页面组件（已实现3个）
+│   │   ├── views/              # 页面组件
 │   │   │   ├── Login.vue       # 登录页面（完成）
 │   │   │   ├── Register.vue    # 注册页面（完成）
+│   │   │   ├── Home.vue        # 首页仪表盘（完成）
 │   │   │   └── VideoList.vue   # 视频列表页（基础列表+筛选）
-│   │   ├── components/         # 公共组件（空）
+│   │   ├── components/         # 公共组件
+│   │   │   └── common/
+│   │   │       └── Layout.vue  # 全局布局
 │   │   ├── api/                # API请求封装
 │   │   │   ├── index.js        # Axios实例
 │   │   │   └── auth.js         # 认证API
@@ -651,10 +654,10 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（3/10 完成）
+### 前端页面（4/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
-- [ ] Home.vue - 首页仪表盘（未实现）
+- [x] Home.vue - 首页仪表盘（基础结构）
 - [x] VideoList.vue - 视频数据查询（基础列表+筛选）
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
@@ -668,7 +671,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 认证API封装 (auth.js)
 - [ ] 其他API模块（videos, statistics, live, admin）
 - [x] 状态管理 (Pinia user store)
-- [ ] 公共组件
+- [x] 公共组件 (Layout)
 
 ### 后端功能（约85% 完成）
 - [x] 用户认证API（注册、登录、JWT）
