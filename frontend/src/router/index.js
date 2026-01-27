@@ -28,6 +28,12 @@ const routes = [
         name: 'VideoList',
         component: () => import('@/views/VideoList.vue'),
         meta: { requiresAuth: true }
+      },
+      {
+        path: 'live',
+        name: 'Live',
+        component: () => import('@/views/Live.vue'),
+        meta: { requiresAuth: true }
       }
     ]
   }
