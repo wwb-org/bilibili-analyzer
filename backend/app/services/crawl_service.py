@@ -10,13 +10,15 @@ from app.services.crawler import BilibiliCrawler
 from app.services.nlp import NLPAnalyzer
 from app.models.models import Video, Comment, CrawlLog
 from app.core.database import SessionLocal
+from app.core.config import settings
 
 
 class CrawlService:
     """采集服务"""
 
     def __init__(self):
-        self.crawler = BilibiliCrawler()
+        # 使用配置的Cookie初始化爬虫（登录后可获取更多评论）
+        self.crawler = BilibiliCrawler(cookie=settings.BILIBILI_COOKIE)
         self.nlp = NLPAnalyzer()
 
     def _get_sentiment_label(self, score: float) -> str:
@@ -64,7 +66,18 @@ class CrawlService:
             print(f"\n[采集任务] 开始采集热门视频，目标: {max_videos} 个")
 
             # 获取热门视频列表
-            videos = self.crawler.get_popular_videos(page=1, page_size=max_videos)
+            videos = []
+            page = 1
+            page_size = min(max_videos, 50)
+            while len(videos) < max_videos:
+                batch = self.crawler.get_popular_videos(page=page, page_size=page_size)
+                if not batch:
+                    break
+                videos.extend(batch)
+                if len(batch) < page_size:
+                    break
+                page += 1
+
             if not videos:
                 raise Exception("获取热门视频失败")
 
@@ -100,11 +113,17 @@ class CrawlService:
                             print(f"  [OK] 评论已保存: {comment_count} 条")
 
                     stats['videos_crawled'] += 1
+                    log.video_count = stats['videos_saved']
+                    log.comment_count = stats['comments_saved']
+                    db.commit()
 
                 except Exception as e:
                     error_msg = f"{bvid}: {str(e)}"
                     stats['errors'].append(error_msg)
                     print(f"  [FAIL] 错误: {e}")
+                    log.video_count = stats['videos_saved']
+                    log.comment_count = stats['comments_saved']
+                    db.commit()
 
             # 更新日志状态
             log.status = 'success'
@@ -160,6 +179,8 @@ class CrawlService:
                     break
 
                 for comment_raw in comments_raw:
+                    if saved_count >= max_comments:
+                        break
                     rpid = comment_raw.get('rpid')  # B站评论ID
                     content = comment_raw.get('content', {}).get('message', '')
                     user_name = comment_raw.get('member', {}).get('uname', '')
@@ -192,6 +213,9 @@ class CrawlService:
                     # 每20条提交一次
                     if saved_count % 20 == 0:
                         db.commit()
+
+                if saved_count >= max_comments:
+                    break
 
             # 最后提交剩余的
             db.commit()

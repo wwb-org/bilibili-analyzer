@@ -96,7 +96,7 @@ const formatNumber = (num) => {
 const fetchVideos = async () => {
   loading.value = true
   try {
-    const res = await request.get('/api/videos', {
+    const res = await request.get('/videos', {
       params: {
         page: pagination.page,
         page_size: pagination.pageSize,
@@ -104,8 +104,9 @@ const fetchVideos = async () => {
         category: filters.category || undefined
       }
     })
-    videos.value = res.data.items || []
-    pagination.total = res.data.total || 0
+    // 响应拦截器已经返回 response.data，所以直接取 items
+    videos.value = res.items || []
+    pagination.total = res.total || 0
   } catch (error) {
     ElMessage.error('获取视频列表失败')
   } finally {

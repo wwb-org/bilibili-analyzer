@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.api.auth import get_current_user
 from app.models import User, CrawlLog, UserRole
 from app.etl.scheduler import etl_scheduler
+from app.services.crawl_service import CrawlService
 
 router = APIRouter()
 
@@ -27,10 +28,19 @@ class CrawlLogResponse(BaseModel):
     task_name: str
     status: str
     video_count: int
+    comment_count: int = 0
     error_msg: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
 
     class Config:
         from_attributes = True
+
+
+class CrawlStartRequest(BaseModel):
+    """采集任务请求"""
+    max_videos: int = 50
+    comments_per_video: int = 100
 
 
 class ETLRunRequest(BaseModel):
@@ -45,10 +55,57 @@ class ETLBackfillRequest(BaseModel):
 
 
 @router.post("/crawl/start")
-def start_crawl(admin: User = Depends(require_admin)):
-    """手动触发数据采集"""
-    # TODO: 触发后台采集任务
-    return {"message": "采集任务已启动", "task_id": 1}
+def start_crawl(
+    request: CrawlStartRequest = CrawlStartRequest(),
+    background_tasks: BackgroundTasks = None,
+    admin: User = Depends(require_admin)
+):
+    """
+    手动触发数据采集
+
+    在后台执行采集任务，立即返回任务启动状态
+    """
+    def run_crawl_task():
+        """后台采集任务"""
+        service = CrawlService()
+        service.crawl_popular_videos(
+            max_videos=request.max_videos,
+            comments_per_video=request.comments_per_video
+        )
+
+    background_tasks.add_task(run_crawl_task)
+
+    return {
+        "message": "采集任务已启动",
+        "config": {
+            "max_videos": request.max_videos,
+            "comments_per_video": request.comments_per_video
+        },
+        "status": "running"
+    }
+
+
+@router.get("/crawl/status")
+def get_crawl_status(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """获取最近一次采集任务的状态"""
+    latest_log = db.query(CrawlLog).order_by(CrawlLog.started_at.desc()).first()
+
+    if not latest_log:
+        return {"status": "no_task", "message": "暂无采集记录"}
+
+    return {
+        "id": latest_log.id,
+        "task_name": latest_log.task_name,
+        "status": latest_log.status,
+        "video_count": latest_log.video_count or 0,
+        "comment_count": latest_log.comment_count or 0,
+        "started_at": latest_log.started_at.isoformat() if latest_log.started_at else None,
+        "finished_at": latest_log.finished_at.isoformat() if latest_log.finished_at else None,
+        "error_msg": latest_log.error_msg
+    }
 
 
 @router.get("/crawl/logs", response_model=List[CrawlLogResponse])
