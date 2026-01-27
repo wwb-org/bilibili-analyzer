@@ -64,13 +64,19 @@ bilibili-analyzer/
 │   │   │   ├── Login.vue       # 登录页面（完成）
 │   │   │   ├── Register.vue    # 注册页面（完成）
 │   │   │   ├── Home.vue        # 首页仪表盘（完成）
-│   │   │   └── VideoList.vue   # 视频列表页（基础列表+筛选）
+│   │   │   └── VideoList.vue   # 视频列表页（卡片网格+详情弹窗）
 │   │   ├── components/         # 公共组件
-│   │   │   └── common/
-│   │   │       └── Layout.vue  # 全局布局
+│   │   │   ├── common/
+│   │   │   │   └── Layout.vue  # 全局布局
+│   │   │   └── video/          # 视频相关组件
+│   │   │       ├── VideoCard.vue          # 视频卡片组件
+│   │   │       ├── VideoPlayer.vue        # B站嵌入式播放器
+│   │   │       ├── VideoDetailDialog.vue  # 视频详情弹窗
+│   │   │       └── CommentList.vue        # 评论列表组件
 │   │   ├── api/                # API请求封装
 │   │   │   ├── index.js        # Axios实例
-│   │   │   └── auth.js         # 认证API
+│   │   │   ├── auth.js         # 认证API
+│   │   │   └── videos.js       # 视频数据API
 │   │   ├── store/              # Pinia状态管理
 │   │   │   └── user.js          # 用户状态
 │   │   ├── router/             # Vue Router路由
@@ -148,7 +154,7 @@ bilibili-analyzer/
 | 1 | 登录 | Login.vue | 公开 | 用户登录 |
 | 2 | 注册 | Register.vue | 公开 | 用户注册 |
 | 3 | 首页仪表盘 | Home.vue | 用户 | 数据概览仪表盘 |
-| 4 | 视频数据 | VideoList.vue | 用户 | 视频列表（已实现基础列表+筛选） |
+| 4 | 视频数据 | VideoList.vue | 用户 | 视频卡片网格、详情弹窗（含播放器、评论） |
 | 5 | 评论分析 | Comments.vue | 用户 | 全局评论聚合分析 |
 | 6 | 热词分析 | Keywords.vue | 用户 | 全局热词聚合分析 |
 | 7 | 直播分析 | Live.vue | 用户 | **实时弹幕分析（亮点）** |
@@ -165,8 +171,9 @@ bilibili-analyzer/
 - 系统状态（仅管理员可见）
 
 #### 视频数据 (VideoList.vue)
-- 已实现：视频列表（关键词/分区筛选、分页、刷新）
-- 待实现：视频详情弹窗、导出Excel、更多筛选项
+- 已实现：视频卡片网格布局、关键词/分区/排序筛选、分页
+- 已实现：点击卡片打开详情弹窗（B站嵌入式播放器、数据统计、评论列表）
+- 待实现：导出Excel、更多筛选项（日期范围）
 
 #### 评论分析 (Comments.vue)
 - 筛选栏：时间范围、视频分区、情感类型、关键词搜索
@@ -215,7 +222,7 @@ PUT  /password     # 修改密码
 ```
 GET  /             # 视频列表（分页、筛选）
 GET  /{bvid}       # 视频详情
-（未实现）/ {bvid}/comments  # 视频评论列表
+GET  /{bvid}/comments  # 视频评论列表（含情感标签）
 ```
 
 ### 统计分析 (/api/statistics)
@@ -684,7 +691,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
-- [x] VideoList.vue - 视频数据查询（基础列表+筛选）
+- [x] VideoList.vue - 视频数据查询（卡片网格+详情弹窗+播放器+评论）
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
 - [x] Live.vue - 直播弹幕分析（完整实现）
@@ -757,7 +764,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 ### 后端功能（约90% 完成）
 - [x] 用户认证API（注册、登录、JWT）
 - [x] 视频数据API（列表、详情）
-- [ ] 视频评论API（未实现）
+- [x] 视频评论API（含情感标签）
 - [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
 - [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）

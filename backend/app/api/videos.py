@@ -3,12 +3,12 @@
 """
 from typing import List, Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models import Video
+from app.models import Video, Comment
 
 router = APIRouter()
 
@@ -79,6 +79,82 @@ def get_video_detail(bvid: str, db: Session = Depends(get_db)):
     """获取视频详情"""
     video = db.query(Video).filter(Video.bvid == bvid).first()
     if not video:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="视频不存在")
     return video
+
+
+class CommentResponse(BaseModel):
+    id: int
+    rpid: Optional[int]
+    content: str
+    user_name: Optional[str]
+    sentiment_score: Optional[float]
+    sentiment_label: Optional[str]
+    like_count: int
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class CommentListResponse(BaseModel):
+    total: int
+    items: List[CommentResponse]
+
+
+def get_sentiment_label(score: Optional[float]) -> Optional[str]:
+    """根据情感分数计算情感标签"""
+    if score is None:
+        return None
+    if score > 0.6:
+        return "positive"
+    elif score < 0.4:
+        return "negative"
+    else:
+        return "neutral"
+
+
+@router.get("/{bvid}/comments", response_model=CommentListResponse)
+def get_video_comments(
+    bvid: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("created_at", regex="^(like_count|created_at)$"),
+    db: Session = Depends(get_db)
+):
+    """获取视频评论列表"""
+    # 查询视频
+    video = db.query(Video).filter(Video.bvid == bvid).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="视频不存在")
+
+    # 查询评论
+    query = db.query(Comment).filter(Comment.video_id == video.id)
+
+    # 总数
+    total = query.count()
+
+    # 排序
+    order_column = getattr(Comment, sort_by)
+    query = query.order_by(order_column.desc())
+
+    # 分页
+    offset = (page - 1) * page_size
+    comments = query.offset(offset).limit(page_size).all()
+
+    # 添加情感标签
+    items = []
+    for comment in comments:
+        item = CommentResponse(
+            id=comment.id,
+            rpid=comment.rpid,
+            content=comment.content,
+            user_name=comment.user_name,
+            sentiment_score=comment.sentiment_score,
+            sentiment_label=get_sentiment_label(comment.sentiment_score),
+            like_count=comment.like_count or 0,
+            created_at=comment.created_at
+        )
+        items.append(item)
+
+    return {"total": total, "items": items}
