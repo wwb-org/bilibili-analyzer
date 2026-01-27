@@ -69,10 +69,13 @@ bilibili-analyzer/
 │   │   │   ├── common/
 │   │   │   │   └── Layout.vue  # 全局布局
 │   │   │   └── video/          # 视频相关组件
-│   │   │       ├── VideoCard.vue          # 视频卡片组件
+│   │   │       ├── VideoCard.vue          # 视频卡片（含互动率、情感标签、对比选择）
 │   │   │       ├── VideoPlayer.vue        # B站嵌入式播放器
-│   │   │       ├── VideoDetailDialog.vue  # 视频详情弹窗
-│   │   │       └── CommentList.vue        # 评论列表组件
+│   │   │       ├── VideoDetailDialog.vue  # 视频详情弹窗（含分析图表）
+│   │   │       ├── VideoStatsPanel.vue    # 筛选统计面板
+│   │   │       ├── VideoCompareDialog.vue # 多视频对比弹窗
+│   │   │       ├── CommentList.vue        # 评论列表组件
+│   │   │       └── DanmakuList.vue        # 弹幕列表组件
 │   │   ├── api/                # API请求封装
 │   │   │   ├── index.js        # Axios实例
 │   │   │   ├── auth.js         # 认证API
@@ -171,9 +174,10 @@ bilibili-analyzer/
 - 系统状态（仅管理员可见）
 
 #### 视频数据 (VideoList.vue)
-- 已实现：视频卡片网格布局、关键词/分区/排序筛选、分页
-- 已实现：点击卡片打开详情弹窗（B站嵌入式播放器、数据统计、评论列表）
-- 待实现：导出Excel、更多筛选项（日期范围）
+- 顶部统计面板：视频数、平均播放、平均互动率、正面评论占比、分区分布饼图
+- 视频卡片网格：互动率标签、情感标签（热门/一般/冷门）
+- 对比模式：勾选多个视频，弹窗对比数据和图表
+- 详情侧边栏：播放器、数据统计、互动率雷达图、情感分布饼图、弹幕词云、评论/弹幕列表
 
 #### 评论分析 (Comments.vue)
 - 筛选栏：时间范围、视频分区、情感类型、关键词搜索
@@ -220,9 +224,13 @@ PUT  /password     # 修改密码
 
 ### 视频数据 (/api/videos)
 ```
-GET  /             # 视频列表（分页、筛选）
-GET  /{bvid}       # 视频详情
+GET  /                 # 视频列表（分页、筛选）
+GET  /stats            # 筛选结果统计（视频数、平均播放、互动率、情感分布）
+POST /compare          # 多视频对比（最多5个）
+GET  /{bvid}           # 视频详情
 GET  /{bvid}/comments  # 视频评论列表（含情感标签）
+GET  /{bvid}/danmakus  # 视频弹幕列表
+GET  /{bvid}/analysis  # 视频分析数据（互动率、情感统计、弹幕热词）
 ```
 
 ### 统计分析 (/api/statistics)
@@ -691,7 +699,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
-- [x] VideoList.vue - 视频数据查询（卡片网格+详情弹窗+播放器+评论）
+- [x] VideoList.vue - 视频数据分析（统计面板+卡片分析标签+详情图表+多视频对比）
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
 - [x] Live.vue - 直播弹幕分析（完整实现）
@@ -755,7 +763,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Live API封装 (live.js - WebSocket连接地址、HTTP接口)
 - [x] Admin API封装 (admin.js - 采集、ETL、用户管理接口)
 - [x] WebSocket工具类 (utils/websocket.js - 连接管理、事件分发、自动重连)
-- [ ] 其他API模块（videos, statistics）
+- [x] 视频API封装 (videos.js - 列表、详情、统计、分析、对比)
 - [x] 状态管理 (Pinia user store)
 - [x] 公共组件 (Layout)
 - [x] Vite配置（WebSocket代理支持）
@@ -764,7 +772,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 ### 后端功能（约90% 完成）
 - [x] 用户认证API（注册、登录、JWT）
 - [x] 视频数据API（列表、详情）
-- [x] 视频评论API（含情感标签）
+- [x] 视频分析API（统计、分析、对比接口）
 - [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
 - [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）

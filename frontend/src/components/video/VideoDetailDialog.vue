@@ -3,7 +3,7 @@
     v-model="visible"
     :title="null"
     :with-header="false"
-    size="520px"
+    size="560px"
     direction="rtl"
     :close-on-click-modal="true"
     class="video-detail-drawer"
@@ -86,6 +86,34 @@
           </div>
         </div>
 
+        <!-- 分析图表区 -->
+        <div class="analysis-section">
+          <h3 class="section-title">数据分析</h3>
+          <div class="charts-row">
+            <!-- 互动率雷达图 -->
+            <div class="chart-wrapper">
+              <div class="chart-label">互动率</div>
+              <div class="chart-card">
+                <div ref="radarChartRef" class="chart-container"></div>
+              </div>
+            </div>
+            <!-- 情感分布饼图 -->
+            <div class="chart-wrapper">
+              <div class="chart-label">评论情感</div>
+              <div class="chart-card">
+                <div ref="pieChartRef" class="chart-container"></div>
+              </div>
+            </div>
+          </div>
+          <!-- 弹幕词云 -->
+          <div class="chart-wrapper">
+            <div class="chart-label">弹幕热词</div>
+            <div class="chart-card wordcloud-card">
+              <div ref="wordcloudChartRef" class="wordcloud-container"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- 下半部分：评论/弹幕区（可滚动） -->
         <div class="content-section">
           <el-tabs v-model="activeTab" class="content-tabs">
@@ -107,12 +135,14 @@
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, nextTick, onUnmounted } from 'vue'
 import { VideoPlay, TopRight } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
+import 'echarts-wordcloud'
 import VideoPlayer from './VideoPlayer.vue'
 import CommentList from './CommentList.vue'
 import DanmakuList from './DanmakuList.vue'
-import { getVideoDetail } from '@/api/videos'
+import { getVideoDetail, getVideoAnalysis } from '@/api/videos'
 
 const props = defineProps({
   modelValue: {
@@ -134,16 +164,35 @@ const visible = computed({
 
 const loading = ref(false)
 const videoDetail = ref(null)
+const analysisData = ref(null)
 const isDescExpanded = ref(false)
 const activeTab = ref('comments')
+
+// 图表 refs
+const radarChartRef = ref(null)
+const pieChartRef = ref(null)
+const wordcloudChartRef = ref(null)
+
+// 图表实例
+let radarChart = null
+let pieChart = null
+let wordcloudChart = null
 
 const fetchVideoDetail = async () => {
   if (!props.bvid) return
 
   loading.value = true
   try {
-    const res = await getVideoDetail(props.bvid)
-    videoDetail.value = res
+    const [detailRes, analysisRes] = await Promise.all([
+      getVideoDetail(props.bvid),
+      getVideoAnalysis(props.bvid)
+    ])
+    videoDetail.value = detailRes
+    analysisData.value = analysisRes
+
+    // 初始化图表
+    await nextTick()
+    initCharts()
   } catch (error) {
     console.error('获取视频详情失败:', error)
     videoDetail.value = null
@@ -152,10 +201,147 @@ const fetchVideoDetail = async () => {
   }
 }
 
+const initCharts = () => {
+  initRadarChart()
+  initPieChart()
+  initWordcloudChart()
+}
+
+const initRadarChart = () => {
+  if (!radarChartRef.value || !analysisData.value) return
+
+  radarChart = echarts.init(radarChartRef.value)
+  const rates = analysisData.value.interaction_rates
+
+  // 动态计算 max 值，确保数据不会溢出，并留出一定余量
+  const getMax = (value, defaultMax) => {
+    if (value <= defaultMax) return defaultMax
+    return Math.ceil(value * 1.2) // 超出时取实际值的 1.2 倍并向上取整
+  }
+
+  radarChart.setOption({
+    tooltip: { trigger: 'item' },
+    radar: {
+      indicator: [
+        { name: '点赞率', max: getMax(rates.like_rate, 15) },
+        { name: '投币率', max: getMax(rates.coin_rate, 5) },
+        { name: '收藏率', max: getMax(rates.favorite_rate, 10) },
+        { name: '分享率', max: getMax(rates.share_rate, 3) }
+      ],
+      radius: '65%',
+      axisName: {
+        color: '#61666D',
+        fontSize: 11
+      }
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: [rates.like_rate, rates.coin_rate, rates.favorite_rate, rates.share_rate],
+        name: '互动率',
+        areaStyle: {
+          color: 'rgba(0, 161, 214, 0.3)'
+        },
+        lineStyle: {
+          color: '#00A1D6'
+        },
+        itemStyle: {
+          color: '#00A1D6'
+        }
+      }]
+    }]
+  })
+}
+
+const initPieChart = () => {
+  if (!pieChartRef.value || !analysisData.value) return
+
+  pieChart = echarts.init(pieChartRef.value)
+  const sentiment = analysisData.value.sentiment_stats
+
+  pieChart.setOption({
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: {c} ({d}%)'
+    },
+    series: [{
+      type: 'pie',
+      radius: ['40%', '70%'],
+      center: ['50%', '50%'],
+      itemStyle: {
+        borderRadius: 4,
+        borderColor: '#fff',
+        borderWidth: 2
+      },
+      label: {
+        show: true,
+        fontSize: 11,
+        formatter: '{b}\n{d}%'
+      },
+      data: [
+        { value: sentiment.positive, name: '正面', itemStyle: { color: '#00B578' } },
+        { value: sentiment.neutral, name: '中性', itemStyle: { color: '#9499A0' } },
+        { value: sentiment.negative, name: '负面', itemStyle: { color: '#F56C6C' } }
+      ]
+    }]
+  })
+}
+
+const initWordcloudChart = () => {
+  if (!wordcloudChartRef.value || !analysisData.value) return
+
+  wordcloudChart = echarts.init(wordcloudChartRef.value)
+  const keywords = analysisData.value.danmaku_keywords || []
+
+  if (keywords.length === 0) {
+    wordcloudChart.setOption({
+      title: {
+        text: '暂无弹幕数据',
+        left: 'center',
+        top: 'center',
+        textStyle: {
+          color: '#9499A0',
+          fontSize: 14
+        }
+      }
+    })
+    return
+  }
+
+  wordcloudChart.setOption({
+    series: [{
+      type: 'wordCloud',
+      shape: 'circle',
+      sizeRange: [12, 28],
+      rotationRange: [-45, 45],
+      gridSize: 8,
+      textStyle: {
+        fontWeight: 'bold',
+        color: () => {
+          const colors = ['#00A1D6', '#FB7299', '#00B578', '#FF9736', '#61666D']
+          return colors[Math.floor(Math.random() * colors.length)]
+        }
+      },
+      data: keywords.map(k => ({ name: k.word, value: k.count }))
+    }]
+  })
+}
+
+const destroyCharts = () => {
+  radarChart?.dispose()
+  pieChart?.dispose()
+  wordcloudChart?.dispose()
+  radarChart = null
+  pieChart = null
+  wordcloudChart = null
+}
+
 const handleClose = () => {
   videoDetail.value = null
+  analysisData.value = null
   isDescExpanded.value = false
   activeTab.value = 'comments'
+  destroyCharts()
 }
 
 const formatNumber = (num) => {
@@ -182,6 +368,10 @@ watch(() => props.modelValue, (newVal) => {
     fetchVideoDetail()
   }
 })
+
+onUnmounted(() => {
+  destroyCharts()
+})
 </script>
 
 <style scoped>
@@ -201,6 +391,7 @@ watch(() => props.modelValue, (newVal) => {
   flex-direction: column;
   height: 100vh;
   background: var(--bg-white);
+  overflow-y: auto;
 }
 
 /* 固定区域 */
@@ -311,7 +502,7 @@ watch(() => props.modelValue, (newVal) => {
   justify-content: center;
   gap: 10px;
   padding: 12px;
-  background: var(--bili-blue-light);
+  background: rgba(0, 161, 214, 0.1);
 }
 
 .stat-icon {
@@ -378,37 +569,65 @@ watch(() => props.modelValue, (newVal) => {
   margin-top: 4px;
 }
 
-/* 评论区 */
-.comments-section {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 16px 20px 20px;
+/* 分析图表区 */
+.analysis-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
 }
 
-.comments-header {
-  flex-shrink: 0;
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 12px 0;
+}
+
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
-.comments-header .panel-title {
-  margin: 0;
+.chart-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.comments-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding-right: 4px;
+.chart-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.chart-card {
+  background: var(--bg-gray-light);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.chart-container {
+  height: 140px;
+  width: 100%;
+}
+
+.wordcloud-card {
+  width: 100%;
+}
+
+.wordcloud-container {
+  height: 120px;
+  width: 100%;
 }
 
 /* 内容区（评论/弹幕标签页） */
 .content-section {
-  flex: 1;
-  min-height: 0;
+  flex-shrink: 0;
+  min-height: 400px;
   display: flex;
   flex-direction: column;
-  padding: 0 20px 20px;
+  padding: 16px 20px 20px;
 }
 
 .content-tabs {
@@ -419,11 +638,12 @@ watch(() => props.modelValue, (newVal) => {
 
 :deep(.content-tabs .el-tabs__header) {
   margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 :deep(.content-tabs .el-tabs__content) {
   flex: 1;
-  min-height: 0;
+  min-height: 300px;
 }
 
 :deep(.content-tabs .el-tab-pane) {
@@ -432,29 +652,26 @@ watch(() => props.modelValue, (newVal) => {
 
 .tab-scroll {
   height: 100%;
+  max-height: 350px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 /* 滚动条样式 */
-.comments-scroll::-webkit-scrollbar,
 .tab-scroll::-webkit-scrollbar {
   width: 4px;
 }
 
-.comments-scroll::-webkit-scrollbar-track,
 .tab-scroll::-webkit-scrollbar-track {
   background: var(--bg-gray-light);
   border-radius: 2px;
 }
 
-.comments-scroll::-webkit-scrollbar-thumb,
 .tab-scroll::-webkit-scrollbar-thumb {
   background: var(--border-regular);
   border-radius: 2px;
 }
 
-.comments-scroll::-webkit-scrollbar-thumb:hover,
 .tab-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }

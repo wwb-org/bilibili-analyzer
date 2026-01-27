@@ -17,11 +17,29 @@ export const getVideos = (params) => {
 }
 
 /**
+ * 获取视频统计数据（根据筛选条件）
+ * @param {Object} params - 查询参数
+ * @param {string} params.category - 分区筛选
+ * @param {string} params.keyword - 关键词搜索
+ */
+export const getVideosStats = (params) => {
+  return api.get('/videos/stats', { params })
+}
+
+/**
  * 获取视频详情
  * @param {string} bvid - 视频 BV 号
  */
 export const getVideoDetail = (bvid) => {
   return api.get(`/videos/${bvid}`)
+}
+
+/**
+ * 获取视频分析数据（互动率、情感分布、弹幕词云）
+ * @param {string} bvid - 视频 BV 号
+ */
+export const getVideoAnalysis = (bvid) => {
+  return api.get(`/videos/${bvid}/analysis`)
 }
 
 /**
@@ -45,4 +63,12 @@ export const getVideoComments = (bvid, params) => {
  */
 export const getVideoDanmakus = (bvid, params) => {
   return api.get(`/videos/${bvid}/danmakus`, { params })
+}
+
+/**
+ * 多视频对比
+ * @param {string[]} bvids - 视频 BV 号数组（最多5个）
+ */
+export const compareVideos = (bvids) => {
+  return api.post('/videos/compare', { bvids })
 }
