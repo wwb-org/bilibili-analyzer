@@ -86,14 +86,20 @@
           </div>
         </div>
 
-        <!-- 下半部分：评论区（可滚动） -->
-        <div class="comments-section">
-          <div class="comments-header">
-            <h3 class="panel-title">评论区</h3>
-          </div>
-          <div class="comments-scroll">
-            <CommentList :bvid="bvid" :simple="true" />
-          </div>
+        <!-- 下半部分：评论/弹幕区（可滚动） -->
+        <div class="content-section">
+          <el-tabs v-model="activeTab" class="content-tabs">
+            <el-tab-pane label="评论" name="comments">
+              <div class="tab-scroll">
+                <CommentList :bvid="bvid" :simple="true" />
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="弹幕" name="danmakus">
+              <div class="tab-scroll">
+                <DanmakuList :bvid="bvid" :simple="true" />
+              </div>
+            </el-tab-pane>
+          </el-tabs>
         </div>
       </template>
     </div>
@@ -105,6 +111,7 @@ import { ref, watch, computed } from 'vue'
 import { VideoPlay, TopRight } from '@element-plus/icons-vue'
 import VideoPlayer from './VideoPlayer.vue'
 import CommentList from './CommentList.vue'
+import DanmakuList from './DanmakuList.vue'
 import { getVideoDetail } from '@/api/videos'
 
 const props = defineProps({
@@ -128,6 +135,7 @@ const visible = computed({
 const loading = ref(false)
 const videoDetail = ref(null)
 const isDescExpanded = ref(false)
+const activeTab = ref('comments')
 
 const fetchVideoDetail = async () => {
   if (!props.bvid) return
@@ -147,6 +155,7 @@ const fetchVideoDetail = async () => {
 const handleClose = () => {
   videoDetail.value = null
   isDescExpanded.value = false
+  activeTab.value = 'comments'
 }
 
 const formatNumber = (num) => {
@@ -393,22 +402,60 @@ watch(() => props.modelValue, (newVal) => {
   padding-right: 4px;
 }
 
+/* 内容区（评论/弹幕标签页） */
+.content-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px 20px;
+}
+
+.content-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.content-tabs .el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+:deep(.content-tabs .el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+:deep(.content-tabs .el-tab-pane) {
+  height: 100%;
+}
+
+.tab-scroll {
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 /* 滚动条样式 */
-.comments-scroll::-webkit-scrollbar {
+.comments-scroll::-webkit-scrollbar,
+.tab-scroll::-webkit-scrollbar {
   width: 4px;
 }
 
-.comments-scroll::-webkit-scrollbar-track {
+.comments-scroll::-webkit-scrollbar-track,
+.tab-scroll::-webkit-scrollbar-track {
   background: var(--bg-gray-light);
   border-radius: 2px;
 }
 
-.comments-scroll::-webkit-scrollbar-thumb {
+.comments-scroll::-webkit-scrollbar-thumb,
+.tab-scroll::-webkit-scrollbar-thumb {
   background: var(--border-regular);
   border-radius: 2px;
 }
 
-.comments-scroll::-webkit-scrollbar-thumb:hover {
+.comments-scroll::-webkit-scrollbar-thumb:hover,
+.tab-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }
 </style>

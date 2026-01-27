@@ -29,6 +29,7 @@ class CrawlLogResponse(BaseModel):
     status: str
     video_count: int
     comment_count: int = 0
+    danmaku_count: int = 0
     error_msg: str | None
     started_at: datetime | None
     finished_at: datetime | None
@@ -41,6 +42,7 @@ class CrawlStartRequest(BaseModel):
     """采集任务请求"""
     max_videos: int = 50
     comments_per_video: int = 100
+    danmakus_per_video: int = 500
 
 
 class ETLRunRequest(BaseModel):
@@ -70,7 +72,8 @@ def start_crawl(
         service = CrawlService()
         service.crawl_popular_videos(
             max_videos=request.max_videos,
-            comments_per_video=request.comments_per_video
+            comments_per_video=request.comments_per_video,
+            danmakus_per_video=request.danmakus_per_video
         )
 
     background_tasks.add_task(run_crawl_task)
@@ -79,7 +82,8 @@ def start_crawl(
         "message": "采集任务已启动",
         "config": {
             "max_videos": request.max_videos,
-            "comments_per_video": request.comments_per_video
+            "comments_per_video": request.comments_per_video,
+            "danmakus_per_video": request.danmakus_per_video
         },
         "status": "running"
     }
@@ -102,6 +106,7 @@ def get_crawl_status(
         "status": latest_log.status,
         "video_count": latest_log.video_count or 0,
         "comment_count": latest_log.comment_count or 0,
+        "danmaku_count": latest_log.danmaku_count or 0,
         "started_at": latest_log.started_at.isoformat() if latest_log.started_at else None,
         "finished_at": latest_log.finished_at.isoformat() if latest_log.finished_at else None,
         "error_msg": latest_log.error_msg

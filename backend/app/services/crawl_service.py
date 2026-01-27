@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.services.crawler import BilibiliCrawler
 from app.services.nlp import NLPAnalyzer
-from app.models.models import Video, Comment, CrawlLog
+from app.models.models import Video, Comment, Danmaku, CrawlLog
 from app.core.database import SessionLocal
 from app.core.config import settings
 
@@ -33,7 +33,8 @@ class CrawlService:
     def crawl_popular_videos(
         self,
         max_videos: int = 50,
-        comments_per_video: int = 100
+        comments_per_video: int = 100,
+        danmakus_per_video: int = 500
     ) -> Dict:
         """
         采集热门视频（带情感分析和日志记录）
@@ -41,6 +42,7 @@ class CrawlService:
         Args:
             max_videos: 最多采集视频数
             comments_per_video: 每个视频采集评论数
+            danmakus_per_video: 每个视频采集弹幕数
 
         Returns:
             采集统计信息
@@ -50,6 +52,7 @@ class CrawlService:
             'videos_crawled': 0,
             'videos_saved': 0,
             'comments_saved': 0,
+            'danmakus_saved': 0,
             'errors': []
         }
 
@@ -112,9 +115,19 @@ class CrawlService:
                             stats['comments_saved'] += comment_count
                             print(f"  [OK] 评论已保存: {comment_count} 条")
 
+                        # 采集弹幕
+                        cid = detail.get('cid')
+                        if cid and danmakus_per_video > 0:
+                            danmaku_count = self._crawl_danmakus(
+                                video.id, cid, danmakus_per_video, db
+                            )
+                            stats['danmakus_saved'] += danmaku_count
+                            print(f"  [OK] 弹幕已保存: {danmaku_count} 条")
+
                     stats['videos_crawled'] += 1
                     log.video_count = stats['videos_saved']
                     log.comment_count = stats['comments_saved']
+                    log.danmaku_count = stats['danmakus_saved']
                     db.commit()
 
                 except Exception as e:
@@ -123,16 +136,18 @@ class CrawlService:
                     print(f"  [FAIL] 错误: {e}")
                     log.video_count = stats['videos_saved']
                     log.comment_count = stats['comments_saved']
+                    log.danmaku_count = stats['danmakus_saved']
                     db.commit()
 
             # 更新日志状态
             log.status = 'success'
             log.video_count = stats['videos_saved']
             log.comment_count = stats['comments_saved']
+            log.danmaku_count = stats['danmakus_saved']
             log.finished_at = datetime.utcnow()
             db.commit()
 
-            print(f"\n[采集任务] 完成！视频: {stats['videos_saved']}, 评论: {stats['comments_saved']}")
+            print(f"\n[采集任务] 完成！视频: {stats['videos_saved']}, 评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
             return stats
 
         except Exception as e:
@@ -224,4 +239,71 @@ class CrawlService:
         except Exception as e:
             db.rollback()
             print(f"    [WARN] 评论采集部分失败: {e}")
+            return saved_count
+
+    def _crawl_danmakus(
+        self,
+        video_id: int,
+        cid: int,
+        max_danmakus: int,
+        db: Session
+    ) -> int:
+        """
+        采集视频弹幕
+
+        Args:
+            video_id: 视频数据库ID
+            cid: B站视频cid
+            max_danmakus: 最多采集弹幕数
+            db: 数据库会话
+
+        Returns:
+            保存的弹幕数量
+        """
+        saved_count = 0
+
+        try:
+            # 获取弹幕
+            danmakus_raw = self.crawler.get_video_danmakus(cid, max_count=max_danmakus)
+            if not danmakus_raw:
+                return 0
+
+            # 获取该视频已有的弹幕内容（用于去重）
+            existing_contents = set(
+                d[0] for d in db.query(Danmaku.content)
+                .filter(Danmaku.video_id == video_id)
+                .all()
+            )
+
+            for danmaku_raw in danmakus_raw:
+                content = danmaku_raw.get('content', '').strip()
+                if not content:
+                    continue
+
+                # 简单去重：相同内容跳过
+                if content in existing_contents:
+                    continue
+
+                # 创建弹幕记录
+                danmaku = Danmaku(
+                    video_id=video_id,
+                    content=content,
+                    send_time=danmaku_raw.get('send_time'),
+                    color=danmaku_raw.get('color')
+                )
+                db.add(danmaku)
+                existing_contents.add(content)
+                saved_count += 1
+
+                # 每50条提交一次
+                if saved_count % 50 == 0:
+                    db.commit()
+
+            # 最后提交剩余的
+            db.commit()
+            return saved_count
+
+        except Exception as e:
+            db.rollback()
+            print(f"    [WARN] 弹幕采集部分失败: {e}")
             return saved_count

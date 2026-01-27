@@ -35,3 +35,14 @@ export const getVideoDetail = (bvid) => {
 export const getVideoComments = (bvid, params) => {
   return api.get(`/videos/${bvid}/comments`, { params })
 }
+
+/**
+ * 获取视频弹幕列表
+ * @param {string} bvid - 视频 BV 号
+ * @param {Object} params - 查询参数
+ * @param {number} params.page - 页码
+ * @param {number} params.page_size - 每页数量
+ */
+export const getVideoDanmakus = (bvid, params) => {
+  return api.get(`/videos/${bvid}/danmakus`, { params })
+}

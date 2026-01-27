@@ -96,6 +96,7 @@ class CrawlLog(Base):
     status = Column(String(20))  # running, success, failed
     video_count = Column(Integer, default=0)
     comment_count = Column(Integer, default=0)
+    danmaku_count = Column(Integer, default=0)
     error_msg = Column(Text)
     started_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime)

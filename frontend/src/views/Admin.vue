@@ -74,6 +74,15 @@
                 controls-position="right"
               />
             </el-form-item>
+            <el-form-item label="每视频弹幕数">
+              <el-input-number
+                v-model="crawlConfig.danmakus_per_video"
+                :min="0"
+                :max="1000"
+                :step="100"
+                controls-position="right"
+              />
+            </el-form-item>
             <el-form-item>
               <el-button
                 type="primary"
@@ -112,6 +121,7 @@
             </el-table-column>
             <el-table-column prop="video_count" label="视频数" width="100" />
             <el-table-column prop="comment_count" label="评论数" width="100" />
+            <el-table-column prop="danmaku_count" label="弹幕数" width="100" />
             <el-table-column prop="error_msg" label="错误信息" min-width="150" show-overflow-tooltip />
           </el-table>
         </div>
@@ -252,7 +262,8 @@ const etlStatus = ref({ is_running: false, jobs: [] })
 
 const crawlConfig = reactive({
   max_videos: 50,
-  comments_per_video: 100
+  comments_per_video: 100,
+  danmakus_per_video: 500
 })
 const crawlLoading = ref(false)
 const crawlLogs = ref([])
@@ -314,7 +325,7 @@ const fetchUsers = async () => {
 const handleStartCrawl = async () => {
   try {
     await ElMessageBox.confirm(
-      `确定要启动采集任务吗？将采集 ${crawlConfig.max_videos} 个视频，每个视频 ${crawlConfig.comments_per_video} 条评论。`,
+      `确定要启动采集任务吗？将采集 ${crawlConfig.max_videos} 个视频，每个视频 ${crawlConfig.comments_per_video} 条评论、${crawlConfig.danmakus_per_video} 条弹幕。`,
       '确认启动',
       { type: 'info' }
     )

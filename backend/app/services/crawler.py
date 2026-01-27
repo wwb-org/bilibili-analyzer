@@ -101,6 +101,60 @@ class BilibiliCrawler:
             return None
 
     @rate_limit(interval=2.0)
+    def get_video_danmakus(self, cid: int, max_count: int = 500) -> Optional[List[Dict]]:
+        """获取视频弹幕
+
+        Args:
+            cid: 视频的cid（从视频详情中获取）
+            max_count: 最多返回的弹幕数量
+
+        Returns:
+            弹幕列表，每条包含 content, send_time, color
+        """
+        # B站弹幕API（XML格式）
+        url = f"https://comment.bilibili.com/{cid}.xml"
+
+        try:
+            resp = self.session.get(url, timeout=10)
+            resp.encoding = 'utf-8'
+
+            if resp.status_code != 200:
+                print(f"获取弹幕失败: HTTP {resp.status_code}")
+                return None
+
+            # 解析XML
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(resp.text)
+
+            danmakus = []
+            for d in root.findall('d'):
+                try:
+                    # 弹幕属性格式: 时间,模式,字号,颜色,时间戳,弹幕池,用户hash,弹幕ID
+                    attrs = d.get('p', '').split(',')
+                    if len(attrs) >= 4:
+                        send_time = float(attrs[0])  # 视频内时间点（秒）
+                        color = int(attrs[3])  # 颜色（十进制）
+                        content = d.text or ''
+
+                        if content.strip():
+                            danmakus.append({
+                                'content': content,
+                                'send_time': send_time,
+                                'color': f'#{color:06x}'  # 转为十六进制颜色
+                            })
+                except (ValueError, IndexError):
+                    continue
+
+                if len(danmakus) >= max_count:
+                    break
+
+            return danmakus
+
+        except Exception as e:
+            print(f"获取弹幕失败: {e}")
+            return None
+
+    @rate_limit(interval=2.0)
     def get_ranking(self, rid: int = 0) -> Optional[List[Dict]]:
         """获取排行榜
         rid: 分区ID，0为全站

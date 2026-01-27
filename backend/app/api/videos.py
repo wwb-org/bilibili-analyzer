@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models import Video, Comment
+from app.models import Video, Comment, Danmaku
 
 router = APIRouter()
 
@@ -17,13 +17,18 @@ class VideoResponse(BaseModel):
     id: int
     bvid: str
     title: str
+    description: Optional[str] = None
     category: Optional[str]
     author_name: Optional[str]
+    author_face: Optional[str] = None
     play_count: int
     like_count: int
     coin_count: int
     share_count: int
+    favorite_count: int = 0
     danmaku_count: int
+    comment_count: int = 0
+    duration: Optional[int] = None
     publish_time: Optional[datetime]
     cover_url: Optional[str]
 
@@ -158,3 +163,48 @@ def get_video_comments(
         items.append(item)
 
     return {"total": total, "items": items}
+
+
+class DanmakuResponse(BaseModel):
+    id: int
+    content: str
+    send_time: Optional[float]
+    color: Optional[str]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class DanmakuListResponse(BaseModel):
+    total: int
+    items: List[DanmakuResponse]
+
+
+@router.get("/{bvid}/danmakus", response_model=DanmakuListResponse)
+def get_video_danmakus(
+    bvid: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db)
+):
+    """获取视频弹幕列表"""
+    # 查询视频
+    video = db.query(Video).filter(Video.bvid == bvid).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="视频不存在")
+
+    # 查询弹幕
+    query = db.query(Danmaku).filter(Danmaku.video_id == video.id)
+
+    # 总数
+    total = query.count()
+
+    # 按视频时间点排序
+    query = query.order_by(Danmaku.send_time.asc())
+
+    # 分页
+    offset = (page - 1) * page_size
+    danmakus = query.offset(offset).limit(page_size).all()
+
+    return {"total": total, "items": danmakus}
