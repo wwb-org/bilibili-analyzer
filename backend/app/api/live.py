@@ -3,10 +3,12 @@
 
 提供：
 - WebSocket 端点：实时接收直播弹幕
-- HTTP 端点：获取直播间信息
+- HTTP 端点：获取直播间信息、多房间统计
 - NLP 分析：弹幕情感分析、词云生成
+- Kafka 集成：弹幕数据发送到 Kafka 供 Spark 处理
 """
 import asyncio
+import logging
 from collections import deque
 from datetime import datetime
 from typing import Dict, Set, Optional, List, Deque
@@ -20,8 +22,21 @@ from app.services.live_client import (
     InteractMessage,
 )
 from app.services.nlp import NLPAnalyzer
+from app.services.kafka_service import (
+    send_danmaku_to_kafka,
+    send_gift_to_kafka,
+    is_kafka_available,
+)
+from app.services.redis_service import (
+    get_room_stats,
+    get_room_stats_history,
+    get_all_room_stats,
+    get_global_wordcloud,
+    is_redis_available,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -96,6 +111,11 @@ class LiveConnectionManager:
         self._stats_tasks: Dict[int, asyncio.Task] = {}
         # NLP 分析器
         self._nlp = NLPAnalyzer()
+        # 统计/词云广播节流（避免高频阻塞）
+        self._last_stats_broadcast: Dict[int, datetime] = {}
+        self._last_wordcloud_broadcast: Dict[int, datetime] = {}
+        self._stats_push_interval = 1.0  # 秒：尽量接近实时
+        self._wordcloud_interval = 3.0  # 秒：词云较重，适度刷新
 
     async def connect(self, room_id: int, websocket: WebSocket):
         """用户连接到直播间"""
@@ -109,6 +129,8 @@ class LiveConnectionManager:
         # 如果是第一个用户，创建 B 站连接和统计
         if room_id not in self._clients:
             self._stats[room_id] = LiveRoomStats()
+            self._last_stats_broadcast[room_id] = datetime.min
+            self._last_wordcloud_broadcast[room_id] = datetime.min
             await self._create_bili_client(room_id)
             # 启动定时广播任务
             self._stats_tasks[room_id] = asyncio.create_task(
@@ -146,6 +168,10 @@ class LiveConnectionManager:
                     del self._stats_tasks[room_id]
                 if room_id in self._stats:
                     del self._stats[room_id]
+                if room_id in self._last_stats_broadcast:
+                    del self._last_stats_broadcast[room_id]
+                if room_id in self._last_wordcloud_broadcast:
+                    del self._last_wordcloud_broadcast[room_id]
 
     async def _create_bili_client(self, room_id: int):
         """创建 B 站直播连接"""
@@ -180,7 +206,8 @@ class LiveConnectionManager:
     async def _broadcast_danmaku(self, room_id: int, msg: DanmakuMessage):
         """广播弹幕消息（带情感分析）"""
         # 情感分析
-        sentiment_score = self._nlp.analyze_sentiment(msg.content)
+        # SnowNLP/分词为同步CPU密集型，放到线程池避免阻塞事件循环
+        sentiment_score = await asyncio.to_thread(self._nlp.analyze_sentiment, msg.content)
         if sentiment_score >= 0.6:
             sentiment_label = "positive"
         elif sentiment_score <= 0.4:
@@ -191,10 +218,31 @@ class LiveConnectionManager:
         # 更新统计
         if room_id in self._stats:
             self._stats[room_id].add_danmaku(msg.content, sentiment_score, sentiment_label)
+            # 高频弹幕下按时间节流推送统计，接近实时
+            now = datetime.now()
+            last = self._last_stats_broadcast.get(room_id, datetime.min)
+            if (now - last).total_seconds() >= self._stats_push_interval:
+                self._last_stats_broadcast[room_id] = now
+                await self._broadcast(room_id, {
+                    "type": "stats",
+                    "data": self._stats[room_id].to_dict()
+                })
+
+        # 发送到 Kafka（供 Spark Streaming 处理）
+        send_danmaku_to_kafka(
+            room_id=room_id,
+            content=msg.content,
+            user_name=msg.user_name,
+            user_id=msg.user_id,
+            sentiment_score=sentiment_score,
+            sentiment_label=sentiment_label,
+            timestamp=msg.timestamp,
+        )
 
         message = {
             "type": "danmaku",
             "data": {
+                "room_id": room_id,
                 "content": msg.content,
                 "user_name": msg.user_name,
                 "user_id": msg.user_id,
@@ -211,9 +259,21 @@ class LiveConnectionManager:
         if room_id in self._stats:
             self._stats[room_id].add_gift()
 
+        # 发送到 Kafka
+        send_gift_to_kafka(
+            room_id=room_id,
+            gift_name=msg.gift_name,
+            gift_count=msg.gift_count,
+            user_name=msg.user_name,
+            user_id=msg.user_id,
+            price=msg.price,
+            timestamp=msg.timestamp,
+        )
+
         message = {
             "type": "gift",
             "data": {
+                "room_id": room_id,
                 "gift_name": msg.gift_name,
                 "gift_count": msg.gift_count,
                 "user_name": msg.user_name,
@@ -263,9 +323,7 @@ class LiveConnectionManager:
 
     async def _periodic_broadcast(self, room_id: int):
         """定时广播统计数据和词云"""
-        stats_interval = 5  # 统计广播间隔（秒）
-        wordcloud_interval = 10  # 词云广播间隔（秒）
-        last_wordcloud_time = datetime.now()
+        stats_interval = 1  # 统计广播间隔（秒）
 
         while True:
             try:
@@ -281,13 +339,17 @@ class LiveConnectionManager:
                     "data": stats.to_dict()
                 })
 
-                # 每 10 秒广播词云
+                # 词云广播（节流）
                 now = datetime.now()
-                if (now - last_wordcloud_time).total_seconds() >= wordcloud_interval:
-                    last_wordcloud_time = now
+                last_wc = self._last_wordcloud_broadcast.get(room_id, datetime.min)
+                if (now - last_wc).total_seconds() >= self._wordcloud_interval:
+                    self._last_wordcloud_broadcast[room_id] = now
                     if stats.recent_danmakus:
-                        wordcloud_data = self._nlp.get_word_cloud_data(
-                            list(stats.recent_danmakus), top_k=50
+                        # 词云生成较重，放到线程池避免阻塞事件循环
+                        wordcloud_data = await asyncio.to_thread(
+                            self._nlp.get_word_cloud_data,
+                            list(stats.recent_danmakus),
+                            top_k=50,
                         )
                         await self._broadcast(room_id, {
                             "type": "wordcloud",
@@ -359,3 +421,126 @@ async def get_room_status(room_id: int):
         "connected": room_id in manager._clients,
         "viewers": manager.get_room_count(room_id),
     }
+
+
+# ==================== 多房间统计 API ====================
+
+@router.get("/multi/stats")
+async def get_multi_room_stats():
+    """
+    获取所有活跃房间的统计数据（由 Spark Streaming 聚合）
+
+    用于多房间对比视图
+    """
+    # 优先从 Redis 获取 Spark 聚合的数据
+    if is_redis_available():
+        spark_stats = get_all_room_stats()
+        if spark_stats:
+            return {
+                "source": "spark",
+                "rooms": [
+                    {"room_id": room_id, **stats}
+                    for room_id, stats in spark_stats.items()
+                ]
+            }
+
+    # 回退：从内存获取实时统计
+    rooms = manager.get_active_rooms()
+    return {
+        "source": "memory",
+        "rooms": [
+            {
+                "room_id": room_id,
+                **manager._stats[room_id].to_dict()
+            }
+            for room_id in rooms
+            if room_id in manager._stats
+        ]
+    }
+
+
+@router.get("/multi/stats/{room_id}/history")
+async def get_room_stats_history_api(room_id: int, limit: int = 50):
+    """
+    获取单个房间的历史统计数据（用于趋势图）
+
+    由 Spark Streaming 写入 Redis
+    """
+    if is_redis_available():
+        history = get_room_stats_history(room_id, limit)
+        if history:
+            return {"room_id": room_id, "history": history}
+
+    return {"room_id": room_id, "history": []}
+
+
+@router.get("/multi/wordcloud")
+async def get_global_wordcloud_api():
+    """
+    获取全局热词（跨房间聚合）
+
+    由 Spark Streaming 聚合所有房间的弹幕生成
+    """
+    if is_redis_available():
+        wordcloud = get_global_wordcloud()
+        if wordcloud:
+            return {"source": "spark", "data": wordcloud}
+
+    # 回退：从内存聚合所有房间的弹幕
+    all_danmakus = []
+    for room_id in manager.get_active_rooms():
+        if room_id in manager._stats:
+            all_danmakus.extend(manager._stats[room_id].recent_danmakus)
+
+    if all_danmakus:
+        wordcloud = manager._nlp.get_word_cloud_data(all_danmakus, top_k=50)
+        return {"source": "memory", "data": wordcloud}
+
+    return {"source": "none", "data": []}
+
+
+@router.get("/multi/ranking")
+async def get_room_ranking():
+    """
+    获取房间热度排行
+
+    按弹幕速率排序
+    """
+    stats = await get_multi_room_stats()
+    rooms = stats.get("rooms", [])
+
+    # 按弹幕数排序
+    sorted_rooms = sorted(
+        rooms,
+        key=lambda x: x.get("total_danmaku", 0),
+        reverse=True
+    )
+
+    return {
+        "source": stats.get("source"),
+        "ranking": [
+            {
+                "rank": i + 1,
+                "room_id": room.get("room_id"),
+                "total_danmaku": room.get("total_danmaku", 0),
+                "avg_sentiment": room.get("avg_sentiment", 0.5),
+            }
+            for i, room in enumerate(sorted_rooms)
+        ]
+    }
+
+
+@router.get("/status/services")
+async def get_services_status():
+    """获取后端服务状态（Kafka、Redis）"""
+    return {
+        "kafka": {
+            "available": is_kafka_available(),
+            "topic": "live-danmaku-topic",
+        },
+        "redis": {
+            "available": is_redis_available(),
+        },
+        "active_rooms": len(manager.get_active_rooms()),
+    }
+
