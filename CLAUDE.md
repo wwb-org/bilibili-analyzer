@@ -193,10 +193,15 @@ bilibili-analyzer/
 - 情感统计卡片 + 分布饼图 + 趋势折线图
 - 评论词云（颜色区分情感）、评论列表（支持分页、导出）
 
-#### 热词分析 (Keywords.vue)
-- 筛选栏：时间范围、视频分区、词来源
-- 热词统计卡片、热词词云、热词排行榜
-- 热词趋势图、热词详情面板（来源分布、关联视频）
+#### 热词分析 (Keywords.vue) - 已完成
+- 筛选栏：时间范围、视频分区、词来源（标题/评论/弹幕）
+- 统计卡片：热词总数、总提及次数、TOP1热词、新增热词
+- 来源分布：标题/评论/弹幕频次对比
+- 热词词云：颜色区分来源（蓝色-标题、绿色-评论、橙色-弹幕），点击交互
+- 热词排行榜：TOP20，支持频次/趋势/热度排序，显示趋势变化
+- 热词详情面板：来源分布饼图、频次趋势图、分区分布、关联视频列表
+- 热词对比分析：选择多个热词对比趋势变化
+- 数据导出：支持CSV格式导出
 
 #### 直播分析 (Live.vue) - 亮点功能
 - 直播间输入：输入房间ID，连接/断开按钮
@@ -253,6 +258,17 @@ GET  /categories      # 分区统计（饼图）
 GET  /keywords        # 热词数据（词云）
 GET  /sentiment       # 情感分析统计
 GET  /top-videos      # 热门视频榜
+```
+
+### 热词分析 (/api/keywords)
+```
+GET  /overview            # 热词概览统计（总数、总频次、TOP1热词）
+GET  /wordcloud           # 热词词云数据（支持来源筛选）
+GET  /ranking             # 热词排行榜（支持分页、排序）
+GET  /{word}/detail       # 热词详情（来源分布、趋势、关联视频）
+POST /compare             # 热词趋势对比（最多5个词）
+GET  /category-compare    # 分区热词对比
+GET  /export              # 导出热词数据（CSV/JSON）
 ```
 
 ### ML预测 (/api/ml)
@@ -604,10 +620,12 @@ python tests/test_etl.py
 |------|------|------|
 | dwd_video_snapshot | DWD | 视频每日快照，保留历史统计数据 |
 | dwd_comment_daily | DWD | 评论每日增量，含情感标签 |
+| dwd_keyword_daily | DWD | 热词每日明细，区分来源（标题/评论/弹幕） |
 | dws_stats_daily | DWS | 每日全局统计（视频数、播放量等） |
 | dws_category_daily | DWS | 每日分区统计 |
 | dws_sentiment_daily | DWS | 每日情感分布统计 |
 | dws_video_trend | DWS | 视频热度趋势（7日增长率） |
+| dws_keyword_stats | DWS | 热词聚合统计（各来源频次、趋势指标） |
 
 **优化接口：**
 | 接口 | 说明 |
@@ -815,13 +833,13 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（7/10 完成）
+### 前端页面（8/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
 - [x] VideoList.vue - 视频数据分析（统计面板+卡片分析标签+详情图表+多视频对比）
-- [ ] Comments.vue - 评论分析（未实现）
-- [ ] Keywords.vue - 热词分析（未实现）
+- [x] Comments.vue - 评论分析（完整实现）
+- [x] Keywords.vue - 热词分析（完整实现：多源融合、词云交互、排行榜、详情面板、对比分析、导出）
 - [x] Live.vue - 直播弹幕分析（完整实现）
 - [x] Prediction.vue - ML预测（完整实现）
 - [x] Admin.vue - 管理员后台（完整实现）

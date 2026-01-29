@@ -21,6 +21,7 @@ from app.etl.dws_tasks import (
     SentimentDailyETL,
     VideoTrendETL,
 )
+from app.etl.keyword_tasks import KeywordDailyETL, KeywordStatsETL
 
 logger = logging.getLogger(__name__)
 
@@ -56,34 +57,44 @@ class ETLScheduler:
             logger.info(f"=== 开始执行每日ETL，日期: {stat_date} ===")
 
             # 1. DWD层：视频快照
-            logger.info("[1/6] 执行视频快照ETL...")
+            logger.info("[1/8] 执行视频快照ETL...")
             task1 = VideoSnapshotETL(db)
             results.append(task1.run(stat_date))
 
             # 2. DWD层：评论每日增量
-            logger.info("[2/6] 执行评论每日增量ETL...")
+            logger.info("[2/8] 执行评论每日增量ETL...")
             task2 = CommentDailyETL(db)
             results.append(task2.run(stat_date))
 
             # 3. DWS层：全局统计
-            logger.info("[3/6] 执行全局统计ETL...")
+            logger.info("[3/8] 执行全局统计ETL...")
             task3 = StatsDailyETL(db)
             results.append(task3.run(stat_date))
 
             # 4. DWS层：分区统计
-            logger.info("[4/6] 执行分区统计ETL...")
+            logger.info("[4/8] 执行分区统计ETL...")
             task4 = CategoryDailyETL(db)
             results.append(task4.run(stat_date))
 
             # 5. DWS层：情感统计
-            logger.info("[5/6] 执行情感统计ETL...")
+            logger.info("[5/8] 执行情感统计ETL...")
             task5 = SentimentDailyETL(db)
             results.append(task5.run(stat_date))
 
             # 6. DWS层：视频趋势
-            logger.info("[6/6] 执行视频趋势ETL...")
+            logger.info("[6/8] 执行视频趋势ETL...")
             task6 = VideoTrendETL(db)
             results.append(task6.run(stat_date))
+
+            # 7. DWD层：热词明细
+            logger.info("[7/8] 执行热词明细ETL...")
+            task7 = KeywordDailyETL(db)
+            results.append(task7.run(stat_date))
+
+            # 8. DWS层：热词聚合
+            logger.info("[8/8] 执行热词聚合ETL...")
+            task8 = KeywordStatsETL(db)
+            results.append(task8.run(stat_date))
 
             logger.info(f"=== 每日ETL执行完成，共 {len(results)} 个任务 ===")
 
