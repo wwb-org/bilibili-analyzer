@@ -26,6 +26,17 @@ export const startCrawl = (config = {}) => {
 }
 
 /**
+ * 批量采集指定视频
+ * @param {Object} config - 采集配置
+ * @param {string[]} config.bvids - BVID列表
+ * @param {number} config.comments_per_video - 每视频评论数
+ * @param {number} config.danmakus_per_video - 每视频弹幕数
+ */
+export const startBatchCrawl = (config) => {
+  return api.post('/admin/crawl/batch', config)
+}
+
+/**
  * 获取采集状态
  */
 export const getCrawlStatus = () => {

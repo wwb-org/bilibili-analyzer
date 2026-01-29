@@ -1,11 +1,12 @@
 """
 管理员API
 """
+import re
 from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.database import get_db
 from app.api.auth import get_current_user
@@ -43,6 +44,28 @@ class CrawlStartRequest(BaseModel):
     max_videos: int = 50
     comments_per_video: int = 100
     danmakus_per_video: int = 500
+
+
+class BatchCrawlRequest(BaseModel):
+    """批量采集请求"""
+    bvids: List[str]
+    comments_per_video: int = 100
+    danmakus_per_video: int = 500
+
+    @field_validator('bvids')
+    @classmethod
+    def validate_bvids(cls, v):
+        if not v:
+            raise ValueError('BVID列表不能为空')
+        if len(v) > 50:
+            raise ValueError('单次最多采集50个视频')
+        # 验证BVID格式
+        pattern = re.compile(r'^BV[a-zA-Z0-9]{10}$')
+        invalid = [bvid for bvid in v if not pattern.match(bvid)]
+        if invalid:
+            raise ValueError(f'无效的BVID格式: {invalid[:3]}')
+        # 去重
+        return list(set(v))
 
 
 class ETLRunRequest(BaseModel):
@@ -122,6 +145,55 @@ def get_crawl_logs(
     """获取采集日志"""
     logs = db.query(CrawlLog).order_by(CrawlLog.started_at.desc()).limit(limit).all()
     return logs
+
+
+@router.post("/crawl/batch")
+def start_batch_crawl(
+    request: BatchCrawlRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    批量采集指定视频
+
+    输入BVID列表，后台采集视频详情、评论、弹幕
+    单次最多支持50个视频
+    """
+    # 创建日志记录（用于追踪任务状态）
+    log = CrawlLog(
+        task_name=f'批量采集({len(request.bvids)}个视频)',
+        status='running',
+        started_at=datetime.utcnow()
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+
+    task_id = log.id
+
+    def run_batch_crawl_task():
+        """后台批量采集任务"""
+        service = CrawlService()
+        service.crawl_batch_videos(
+            bvids=request.bvids,
+            comments_per_video=request.comments_per_video,
+            danmakus_per_video=request.danmakus_per_video,
+            log_id=task_id
+        )
+
+    background_tasks.add_task(run_batch_crawl_task)
+
+    return {
+        "message": "批量采集任务已启动",
+        "task_id": task_id,
+        "config": {
+            "bvids_count": len(request.bvids),
+            "comments_per_video": request.comments_per_video,
+            "danmakus_per_video": request.danmakus_per_video
+        },
+        "status": "running"
+    }
 
 
 @router.get("/users")

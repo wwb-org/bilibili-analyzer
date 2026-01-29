@@ -65,51 +65,146 @@
       <div class="panel-header">
         <div class="panel-title-group">
           <h3 class="panel-title">数据采集</h3>
-          <span class="panel-subtitle">采集B站热门视频及评论数据</span>
+          <span class="panel-subtitle">采集B站视频及评论数据</span>
         </div>
       </div>
       <div class="panel-body">
-        <div class="crawl-config">
-          <el-form :inline="true" :model="crawlConfig">
-            <el-form-item label="采集视频数">
-              <el-input-number
-                v-model="crawlConfig.max_videos"
-                :min="10"
-                :max="200"
-                :step="10"
-                controls-position="right"
-              />
-            </el-form-item>
-            <el-form-item label="每视频评论数">
-              <el-input-number
-                v-model="crawlConfig.comments_per_video"
-                :min="20"
-                :max="200"
-                :step="20"
-                controls-position="right"
-              />
-            </el-form-item>
-            <el-form-item label="每视频弹幕数">
-              <el-input-number
-                v-model="crawlConfig.danmakus_per_video"
-                :min="0"
-                :max="1000"
-                :step="100"
-                controls-position="right"
-              />
-            </el-form-item>
-            <el-form-item>
-              <el-button
-                type="primary"
-                :loading="crawlLoading"
-                @click="handleStartCrawl"
-              >
-                <el-icon><VideoPlay /></el-icon>
-                启动采集任务
-              </el-button>
-            </el-form-item>
-          </el-form>
-        </div>
+        <!-- Tab切换 -->
+        <el-tabs v-model="crawlTab" class="crawl-tabs">
+          <!-- Tab 1: 热门采集 -->
+          <el-tab-pane label="热门视频采集" name="popular">
+            <div class="crawl-config">
+              <el-form :inline="true" :model="crawlConfig">
+                <el-form-item label="采集视频数">
+                  <el-input-number
+                    v-model="crawlConfig.max_videos"
+                    :min="10"
+                    :max="200"
+                    :step="10"
+                    controls-position="right"
+                  />
+                </el-form-item>
+                <el-form-item label="每视频评论数">
+                  <el-input-number
+                    v-model="crawlConfig.comments_per_video"
+                    :min="20"
+                    :max="200"
+                    :step="20"
+                    controls-position="right"
+                  />
+                </el-form-item>
+                <el-form-item label="每视频弹幕数">
+                  <el-input-number
+                    v-model="crawlConfig.danmakus_per_video"
+                    :min="0"
+                    :max="1000"
+                    :step="100"
+                    controls-position="right"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button
+                    type="primary"
+                    :loading="crawlLoading"
+                    @click="handleStartCrawl"
+                  >
+                    <el-icon><VideoPlay /></el-icon>
+                    启动采集任务
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </div>
+          </el-tab-pane>
+
+          <!-- Tab 2: 批量采集 -->
+          <el-tab-pane label="批量指定采集" name="batch">
+            <div class="batch-crawl-section">
+              <!-- BVID输入区 -->
+              <div class="bvid-input-area">
+                <div class="input-header">
+                  <span class="input-label">输入视频BVID（每行一个，最多50个）</span>
+                  <el-button text type="primary" size="small" @click="handleParseBvids">
+                    <el-icon><Check /></el-icon>
+                    解析验证
+                  </el-button>
+                </div>
+                <el-input
+                  v-model="batchCrawlForm.bvidText"
+                  type="textarea"
+                  :rows="6"
+                  placeholder="BV1xx4y1c7mX
+BV1yy4y1c7mY
+BV1zz4y1c7mZ
+...
+支持粘贴B站视频链接，会自动提取BVID"
+                />
+              </div>
+
+              <!-- 解析结果预览 -->
+              <div class="bvid-preview" v-if="parsedBvids.valid.length > 0 || parsedBvids.invalid.length > 0">
+                <div class="preview-stats">
+                  <el-tag type="success" size="small">有效: {{ parsedBvids.valid.length }}</el-tag>
+                  <el-tag type="danger" size="small" v-if="parsedBvids.invalid.length > 0">
+                    无效: {{ parsedBvids.invalid.length }}
+                  </el-tag>
+                </div>
+                <div class="preview-list" v-if="parsedBvids.valid.length > 0">
+                  <el-tag
+                    v-for="bvid in parsedBvids.valid.slice(0, 10)"
+                    :key="bvid"
+                    size="small"
+                    closable
+                    @close="handleRemoveBvid(bvid)"
+                  >
+                    {{ bvid }}
+                  </el-tag>
+                  <span v-if="parsedBvids.valid.length > 10" class="more-hint">
+                    ...等{{ parsedBvids.valid.length }}个
+                  </span>
+                </div>
+                <div class="invalid-hint" v-if="parsedBvids.invalid.length > 0">
+                  <el-text type="danger" size="small">
+                    无效格式: {{ parsedBvids.invalid.slice(0, 3).join(', ') }}
+                    {{ parsedBvids.invalid.length > 3 ? '...' : '' }}
+                  </el-text>
+                </div>
+              </div>
+
+              <!-- 采集参数配置 -->
+              <el-form :inline="true" :model="batchCrawlForm" class="batch-config">
+                <el-form-item label="每视频评论数">
+                  <el-input-number
+                    v-model="batchCrawlForm.comments_per_video"
+                    :min="0"
+                    :max="200"
+                    :step="20"
+                    controls-position="right"
+                  />
+                </el-form-item>
+                <el-form-item label="每视频弹幕数">
+                  <el-input-number
+                    v-model="batchCrawlForm.danmakus_per_video"
+                    :min="0"
+                    :max="1000"
+                    :step="100"
+                    controls-position="right"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button
+                    type="primary"
+                    :loading="batchCrawlLoading"
+                    :disabled="parsedBvids.valid.length === 0"
+                    @click="handleStartBatchCrawl"
+                  >
+                    <el-icon><VideoPlay /></el-icon>
+                    启动批量采集
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
 
         <!-- 采集日志表格 -->
         <div class="log-section">
@@ -333,12 +428,14 @@ import {
   Setting,
   Search,
   CircleCheck,
-  CircleClose
+  CircleClose,
+  Check
 } from '@element-plus/icons-vue'
 import {
   getUsers,
   getCrawlLogs,
   startCrawl,
+  startBatchCrawl,
   getETLStatus,
   runETL,
   backfillETL,
@@ -370,6 +467,19 @@ const crawlConfig = reactive({
 const crawlLoading = ref(false)
 const crawlLogs = ref([])
 const logsLoading = ref(false)
+const crawlTab = ref('popular')
+
+// 批量采集
+const batchCrawlForm = reactive({
+  bvidText: '',
+  comments_per_video: 100,
+  danmakus_per_video: 500
+})
+const batchCrawlLoading = ref(false)
+const parsedBvids = reactive({
+  valid: [],
+  invalid: []
+})
 
 const users = ref([])
 const usersLoading = ref(false)
@@ -467,6 +577,93 @@ const handleStartCrawl = async () => {
     }
   } finally {
     crawlLoading.value = false
+  }
+}
+
+// ========== 批量采集方法 ==========
+const handleParseBvids = () => {
+  const text = batchCrawlForm.bvidText.trim()
+  if (!text) {
+    ElMessage.warning('请输入BVID')
+    return
+  }
+
+  // BVID正则
+  const bvidPattern = /BV[a-zA-Z0-9]{10}/g
+
+  // 提取所有匹配的BVID
+  const matches = text.match(bvidPattern) || []
+  const uniqueBvids = [...new Set(matches)]
+
+  // 按行分割，找出无法识别的行
+  const lines = text.split(/[\n,;，；]/).map(l => l.trim()).filter(l => l)
+  const invalid = []
+
+  for (const line of lines) {
+    const found = line.match(bvidPattern)
+    if (!found && line && !line.startsWith('#')) {
+      invalid.push(line.length > 20 ? line.slice(0, 20) + '...' : line)
+    }
+  }
+
+  parsedBvids.valid = uniqueBvids
+  parsedBvids.invalid = [...new Set(invalid)]
+
+  if (parsedBvids.valid.length === 0) {
+    ElMessage.warning('未识别到有效的BVID')
+  } else {
+    ElMessage.success(`识别到 ${parsedBvids.valid.length} 个有效BVID`)
+  }
+}
+
+const handleRemoveBvid = (bvid) => {
+  const index = parsedBvids.valid.indexOf(bvid)
+  if (index > -1) {
+    parsedBvids.valid.splice(index, 1)
+  }
+}
+
+const handleStartBatchCrawl = async () => {
+  if (parsedBvids.valid.length === 0) {
+    ElMessage.warning('请先解析BVID')
+    return
+  }
+
+  if (parsedBvids.valid.length > 50) {
+    ElMessage.warning('单次最多采集50个视频')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要采集 ${parsedBvids.valid.length} 个视频吗？\n每个视频将采集 ${batchCrawlForm.comments_per_video} 条评论、${batchCrawlForm.danmakus_per_video} 条弹幕。\n预计耗时约 ${Math.ceil(parsedBvids.valid.length * 8 / 60)} 分钟。`,
+      '确认采集',
+      { type: 'info' }
+    )
+
+    batchCrawlLoading.value = true
+
+    await startBatchCrawl({
+      bvids: parsedBvids.valid,
+      comments_per_video: batchCrawlForm.comments_per_video,
+      danmakus_per_video: batchCrawlForm.danmakus_per_video
+    })
+
+    ElMessage.success('批量采集任务已启动，请稍后刷新日志查看进度')
+
+    // 清空输入
+    batchCrawlForm.bvidText = ''
+    parsedBvids.valid = []
+    parsedBvids.invalid = []
+
+    // 延迟刷新日志
+    setTimeout(fetchCrawlLogs, 3000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('启动采集失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    batchCrawlLoading.value = false
   }
 }
 
@@ -730,6 +927,73 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-regular);
+}
+
+/* 批量采集样式 */
+.crawl-tabs {
+  margin-bottom: 16px;
+}
+
+.batch-crawl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bvid-input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.input-label {
+  font-size: 14px;
+  color: var(--text-regular);
+}
+
+.bvid-preview {
+  padding: 12px 16px;
+  background: var(--bg-gray-light);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-stats {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.more-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  align-self: center;
+}
+
+.invalid-hint {
+  margin-top: 4px;
+}
+
+.batch-config {
+  margin-top: 8px;
+}
+
+.batch-config .el-form-item {
+  margin-bottom: 0;
+  margin-right: 24px;
 }
 
 /* ETL 操作区 */

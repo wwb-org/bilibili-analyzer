@@ -3,7 +3,7 @@
 封装完整的采集业务逻辑，集成情感分析和日志记录
 """
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.services.crawler import BilibiliCrawler
@@ -307,3 +307,152 @@ class CrawlService:
             db.rollback()
             print(f"    [WARN] 弹幕采集部分失败: {e}")
             return saved_count
+
+    def crawl_batch_videos(
+        self,
+        bvids: List[str],
+        comments_per_video: int = 100,
+        danmakus_per_video: int = 500,
+        log_id: int = None
+    ) -> Dict:
+        """
+        批量采集指定视频
+
+        Args:
+            bvids: 要采集的BVID列表
+            comments_per_video: 每个视频采集评论数
+            danmakus_per_video: 每个视频采集弹幕数
+            log_id: 已创建的日志ID（可选，用于更新进度）
+
+        Returns:
+            采集统计信息
+        """
+        db = SessionLocal()
+        stats = {
+            'total': len(bvids),
+            'videos_crawled': 0,
+            'videos_saved': 0,
+            'comments_saved': 0,
+            'danmakus_saved': 0,
+            'errors': [],
+            'details': []  # 每个视频的采集结果
+        }
+
+        # 获取或创建日志
+        log = None
+        if log_id:
+            log = db.query(CrawlLog).filter(CrawlLog.id == log_id).first()
+
+        if not log:
+            log = CrawlLog(
+                task_name=f'批量采集({len(bvids)}个视频)',
+                status='running',
+                started_at=datetime.utcnow()
+            )
+            db.add(log)
+            db.commit()
+
+        try:
+            print(f"\n[批量采集] 开始采集 {len(bvids)} 个指定视频")
+
+            for i, bvid in enumerate(bvids, 1):
+                video_result = {
+                    'bvid': bvid,
+                    'status': 'pending',
+                    'title': '',
+                    'comments': 0,
+                    'danmakus': 0,
+                    'error': None
+                }
+
+                try:
+                    print(f"\n[{i}/{len(bvids)}] 处理视频: {bvid}")
+
+                    # 获取视频详情
+                    detail = self.crawler.get_video_detail(bvid)
+                    if not detail:
+                        video_result['status'] = 'failed'
+                        video_result['error'] = '获取详情失败(可能视频不存在或已删除)'
+                        stats['errors'].append(f"{bvid}: 获取详情失败")
+                        stats['details'].append(video_result)
+                        continue
+
+                    video_result['title'] = detail.get('title', '')[:50]
+
+                    # 解析并保存视频
+                    video_data = self.crawler.parse_video_data(detail)
+                    video = self.crawler.save_video(video_data, db)
+
+                    if video:
+                        stats['videos_saved'] += 1
+                        print(f"  [OK] 视频已保存: {video.title[:30] if video.title else ''}")
+
+                        # 采集并分析评论
+                        oid = detail.get('aid')
+                        if oid:
+                            comment_count = self._crawl_and_analyze_comments(
+                                video.id, oid, comments_per_video, db
+                            )
+                            stats['comments_saved'] += comment_count
+                            video_result['comments'] = comment_count
+                            print(f"  [OK] 评论已保存: {comment_count} 条")
+
+                        # 采集弹幕
+                        cid = detail.get('cid')
+                        if cid and danmakus_per_video > 0:
+                            danmaku_count = self._crawl_danmakus(
+                                video.id, cid, danmakus_per_video, db
+                            )
+                            stats['danmakus_saved'] += danmaku_count
+                            video_result['danmakus'] = danmaku_count
+                            print(f"  [OK] 弹幕已保存: {danmaku_count} 条")
+
+                        video_result['status'] = 'success'
+                    else:
+                        video_result['status'] = 'updated'  # 视频已存在，已更新
+
+                    stats['videos_crawled'] += 1
+
+                    # 实时更新日志
+                    log.video_count = stats['videos_saved']
+                    log.comment_count = stats['comments_saved']
+                    log.danmaku_count = stats['danmakus_saved']
+                    db.commit()
+
+                except Exception as e:
+                    video_result['status'] = 'failed'
+                    video_result['error'] = str(e)
+                    stats['errors'].append(f"{bvid}: {str(e)}")
+                    print(f"  [FAIL] 错误: {e}")
+
+                stats['details'].append(video_result)
+
+            # 更新日志状态
+            log.status = 'success'
+            log.video_count = stats['videos_saved']
+            log.comment_count = stats['comments_saved']
+            log.danmaku_count = stats['danmakus_saved']
+            log.finished_at = datetime.utcnow()
+
+            if stats['errors']:
+                # 部分失败时记录错误信息
+                log.error_msg = f"部分失败({len(stats['errors'])}个): " + '; '.join(stats['errors'][:5])
+
+            db.commit()
+
+            print(f"\n[批量采集] 完成！成功: {stats['videos_saved']}/{stats['total']}, "
+                  f"评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
+            return stats
+
+        except Exception as e:
+            log.status = 'failed'
+            log.error_msg = str(e)
+            log.finished_at = datetime.utcnow()
+            db.commit()
+
+            stats['errors'].append(f"全局错误: {str(e)}")
+            print(f"[批量采集] 失败: {e}")
+            return stats
+
+        finally:
+            db.close()
