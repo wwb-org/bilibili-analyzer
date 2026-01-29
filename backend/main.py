@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, videos, statistics, admin, live, ml
+from app.api import auth, videos, statistics, admin, live, ml, comments
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.etl.scheduler import etl_scheduler
@@ -67,6 +67,7 @@ app.include_router(statistics.router, prefix="/api/statistics", tags=["统计分
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
 app.include_router(live.router, prefix="/api/live", tags=["直播分析"])
 app.include_router(ml.router, prefix="/api/ml", tags=["机器学习"])
+app.include_router(comments.router, prefix="/api/comments", tags=["评论分析"])
 
 
 @app.get("/")

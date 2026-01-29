@@ -43,6 +43,12 @@ const routes = [
         meta: { requiresAuth: true }
       },
       {
+        path: 'comments',
+        name: 'Comments',
+        component: () => import('@/views/Comments.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
         path: 'admin',
         name: 'Admin',
         component: () => import('@/views/Admin.vue'),
