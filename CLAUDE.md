@@ -225,6 +225,7 @@ PUT  /password     # 修改密码
 ### 视频数据 (/api/videos)
 ```
 GET  /                 # 视频列表（分页、筛选）
+GET  /categories       # 获取分区列表（动态，仅返回已有数据的分区）
 GET  /stats            # 筛选结果统计（视频数、平均播放、互动率、情感分布）
 POST /compare          # 多视频对比（最多5个）
 GET  /{bvid}           # 视频详情
@@ -763,7 +764,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Live API封装 (live.js - WebSocket连接地址、HTTP接口)
 - [x] Admin API封装 (admin.js - 采集、ETL、用户管理接口)
 - [x] WebSocket工具类 (utils/websocket.js - 连接管理、事件分发、自动重连)
-- [x] 视频API封装 (videos.js - 列表、详情、统计、分析、对比)
+- [x] 视频API封装 (videos.js - 列表、详情、统计、分析、对比、分区列表)
 - [x] 状态管理 (Pinia user store)
 - [x] 公共组件 (Layout)
 - [x] Vite配置（WebSocket代理支持）

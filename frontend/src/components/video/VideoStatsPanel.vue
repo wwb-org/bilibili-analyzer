@@ -12,6 +12,17 @@
         </div>
       </div>
 
+      <!-- 总播放量 -->
+      <div class="stat-card">
+        <div class="stat-icon-bg icon-purple">
+          <el-icon><Odometer /></el-icon>
+        </div>
+        <div class="stat-info">
+          <div class="stat-value">{{ formatNumber(stats.total_play_count) }}</div>
+          <div class="stat-label">总播放量</div>
+        </div>
+      </div>
+
       <!-- 平均播放 -->
       <div class="stat-card">
         <div class="stat-icon-bg icon-green">
@@ -56,7 +67,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { VideoPlay, View, TrendCharts, ChatDotSquare } from '@element-plus/icons-vue'
+import { VideoPlay, View, TrendCharts, ChatDotSquare, Odometer } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -179,7 +190,7 @@ onUnmounted(() => {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 16px;
 }
 
@@ -206,6 +217,11 @@ onUnmounted(() => {
 .icon-blue {
   background: rgba(0, 161, 214, 0.1);
   color: var(--bili-blue);
+}
+
+.icon-purple {
+  background: rgba(114, 46, 209, 0.1);
+  color: #722ED1;
 }
 
 .icon-green {
@@ -261,7 +277,7 @@ onUnmounted(() => {
 }
 
 /* 响应式适配 */
-@media (max-width: 1200px) {
+@media (max-width: 1400px) {
   .stats-grid {
     grid-template-columns: repeat(3, 1fr);
   }
@@ -275,7 +291,7 @@ onUnmounted(() => {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }

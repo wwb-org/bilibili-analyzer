@@ -177,13 +177,20 @@ class BilibiliCrawler:
         stat = raw_data.get('stat', {})
         owner = raw_data.get('owner', {})
 
+        # 分区字段优先级：tname > tnamev2 > tname_v2
+        # 热门列表API使用 tname/tnamev2，详情API的这些字段可能为空
+        category = (raw_data.get('tname', '') or
+                    raw_data.get('tnamev2', '') or
+                    raw_data.get('tname_v2', ''))
+
         return {
             'bvid': raw_data.get('bvid'),
             'title': raw_data.get('title'),
             'description': raw_data.get('desc', ''),
-            'category': raw_data.get('tname', ''),
+            'category': category,
             'author_id': owner.get('mid'),
             'author_name': owner.get('name'),
+            'author_face': owner.get('face', ''),
             'play_count': stat.get('view', 0),
             'like_count': stat.get('like', 0),
             'coin_count': stat.get('coin', 0),
@@ -193,7 +200,9 @@ class BilibiliCrawler:
             'comment_count': stat.get('reply', 0),
             'publish_time': raw_data.get('pubdate'),
             'duration': raw_data.get('duration'),
-            'cover_url': raw_data.get('pic')
+            'cover_url': raw_data.get('pic'),
+            'cid': raw_data.get('cid'),  # 用于获取弹幕
+            'aid': raw_data.get('aid'),  # 用于获取评论
         }
 
     def save_video(self, video_data: Dict, db: Session) -> Optional[Video]:

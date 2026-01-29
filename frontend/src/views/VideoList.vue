@@ -7,6 +7,7 @@
         <span class="page-desc">全网视频趋势监控</span>
       </div>
       <div class="header-right">
+        <el-button :icon="Download" @click="handleExport">导出CSV</el-button>
         <el-button type="primary" :icon="Refresh" circle @click="handleRefresh" :loading="loading" />
       </div>
     </div>
@@ -31,23 +32,35 @@
         <el-form-item>
           <el-select v-model="filters.category" placeholder="全部分区" clearable class="filter-select" @change="handleFilterChange">
             <el-option label="全部分区" value="" />
-            <el-option label="游戏" value="游戏" />
-            <el-option label="生活" value="生活" />
-            <el-option label="科技" value="科技" />
-            <el-option label="娱乐" value="娱乐" />
-            <el-option label="动画" value="动画" />
-            <el-option label="音乐" value="音乐" />
-            <el-option label="影视" value="影视" />
-            <el-option label="知识" value="知识" />
+            <el-option v-for="cat in categoryOptions" :key="cat" :label="cat" :value="cat" />
           </el-select>
         </el-form-item>
 
         <el-form-item>
-          <el-radio-group v-model="filters.order_by" @change="fetchVideos" class="sort-radio">
-            <el-radio-button label="play_count">播放最高</el-radio-button>
-            <el-radio-button label="like_count">最受喜欢</el-radio-button>
-            <el-radio-button label="publish_time">最新发布</el-radio-button>
-          </el-radio-group>
+          <el-date-picker
+            v-model="filters.dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="发布开始"
+            end-placeholder="发布结束"
+            :shortcuts="dateShortcuts"
+            class="date-picker"
+            @change="handleFilterChange"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item>
+          <el-select v-model="filters.order_by" class="sort-select" @change="fetchVideos">
+            <el-option label="播放最高" value="play_count" />
+            <el-option label="最受喜欢" value="like_count" />
+            <el-option label="投币最多" value="coin_count" />
+            <el-option label="收藏最多" value="favorite_count" />
+            <el-option label="评论最多" value="comment_count" />
+            <el-option label="弹幕最多" value="danmaku_count" />
+            <el-option label="互动率最高" value="interaction_rate" />
+            <el-option label="最新发布" value="publish_time" />
+          </el-select>
         </el-form-item>
 
         <!-- 对比模式开关 -->
@@ -127,15 +140,18 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh } from '@element-plus/icons-vue'
+import { Search, Refresh, Calendar, Download } from '@element-plus/icons-vue'
 import VideoCard from '@/components/video/VideoCard.vue'
 import VideoDetailDialog from '@/components/video/VideoDetailDialog.vue'
 import VideoStatsPanel from '@/components/video/VideoStatsPanel.vue'
 import VideoCompareDialog from '@/components/video/VideoCompareDialog.vue'
-import { getVideos, getVideosStats } from '@/api/videos'
+import { getVideos, getVideosStats, getExportUrl, getCategories } from '@/api/videos'
 
 const loading = ref(false)
 const videos = ref([])
+
+// 分区选项
+const categoryOptions = ref([])
 
 // 统计数据
 const statsLoading = ref(false)
@@ -151,7 +167,8 @@ const statsData = ref({
 const filters = reactive({
   keyword: '',
   category: '',
-  order_by: 'play_count'
+  order_by: 'play_count',
+  dateRange: null  // [startDate, endDate]
 })
 
 const pagination = reactive({
@@ -169,13 +186,61 @@ const compareMode = ref(false)
 const selectedBvids = ref([])
 const compareDialogVisible = ref(false)
 
+// 时间快捷选项
+const dateShortcuts = [
+  {
+    text: '今天',
+    value: () => {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      return [today, new Date()]
+    }
+  },
+  {
+    text: '最近7天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 7)
+      return [start, end]
+    }
+  },
+  {
+    text: '最近30天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 30)
+      return [start, end]
+    }
+  },
+  {
+    text: '最近90天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 90)
+      return [start, end]
+    }
+  }
+]
+
+// 格式化日期为ISO字符串
+const formatDateISO = (date) => {
+  if (!date) return undefined
+  const d = new Date(date)
+  return d.toISOString()
+}
+
 // 获取统计数据
 const fetchStats = async () => {
   statsLoading.value = true
   try {
     const res = await getVideosStats({
       keyword: filters.keyword || undefined,
-      category: filters.category || undefined
+      category: filters.category || undefined,
+      start_date: filters.dateRange ? formatDateISO(filters.dateRange[0]) : undefined,
+      end_date: filters.dateRange ? formatDateISO(filters.dateRange[1]) : undefined
     })
     statsData.value = res
   } catch (error) {
@@ -193,7 +258,9 @@ const fetchVideos = async () => {
       page_size: pagination.pageSize,
       keyword: filters.keyword || undefined,
       category: filters.category || undefined,
-      order_by: filters.order_by
+      order_by: filters.order_by,
+      start_date: filters.dateRange ? formatDateISO(filters.dateRange[0]) : undefined,
+      end_date: filters.dateRange ? formatDateISO(filters.dateRange[1]) : undefined
     })
     videos.value = res.items || []
     pagination.total = res.total || 0
@@ -264,7 +331,39 @@ const clearSelection = () => {
   selectedBvids.value = []
 }
 
+// 导出CSV
+const handleExport = () => {
+  const exportUrl = getExportUrl({
+    category: filters.category || undefined,
+    keyword: filters.keyword || undefined,
+    start_date: filters.dateRange ? formatDateISO(filters.dateRange[0]) : undefined,
+    end_date: filters.dateRange ? formatDateISO(filters.dateRange[1]) : undefined,
+    order_by: filters.order_by
+  })
+
+  // 使用隐藏的 a 标签触发下载
+  const link = document.createElement('a')
+  link.href = exportUrl
+  link.download = ''
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+
+  ElMessage.success('正在导出数据，请稍候...')
+}
+
+// 加载分区选项
+const fetchCategories = async () => {
+  try {
+    const res = await getCategories()
+    categoryOptions.value = res || []
+  } catch (e) {
+    console.error('获取分区列表失败', e)
+  }
+}
+
 onMounted(() => {
+  fetchCategories()
   fetchVideos()
   fetchStats()
 })
@@ -303,6 +402,12 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 /* 筛选区样式 */
 .filter-section {
   margin-bottom: 24px;
@@ -329,6 +434,14 @@ onMounted(() => {
 
 .filter-select {
   width: 160px;
+}
+
+.date-picker {
+  width: 260px;
+}
+
+.sort-select {
+  width: 140px;
 }
 
 /* 对比模式开关 */

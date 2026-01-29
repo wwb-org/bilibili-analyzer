@@ -92,14 +92,22 @@ class CrawlService:
                     bvid = video_raw.get('bvid')
                     print(f"\n[{i}/{max_videos}] 处理视频: {bvid}")
 
-                    # 获取视频详情
+                    # 从列表数据获取分区信息（详情API不返回分区名）
+                    category_from_list = video_raw.get('tname', '') or video_raw.get('tnamev2', '')
+
+                    # 获取视频详情（用于获取cid、aid等）
                     detail = self.crawler.get_video_detail(bvid)
                     if not detail:
                         stats['errors'].append(f"{bvid}: 获取详情失败")
                         continue
 
-                    # 解析并保存视频
+                    # 解析视频数据
                     video_data = self.crawler.parse_video_data(detail)
+
+                    # 用列表数据的分区覆盖（详情API的分区字段为空）
+                    if category_from_list and not video_data.get('category'):
+                        video_data['category'] = category_from_list
+
                     video = self.crawler.save_video(video_data, db)
 
                     if video:

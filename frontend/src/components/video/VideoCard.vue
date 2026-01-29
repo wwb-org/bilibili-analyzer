@@ -35,16 +35,20 @@
       <div class="video-title" :title="video.title">{{ video.title }}</div>
       <div class="video-meta">
         <span class="author">{{ video.author_name || '未知UP主' }}</span>
-        <div class="stats">
-          <span class="stat-item">
-            <el-icon><VideoPlay /></el-icon>
-            {{ formatNumber(video.play_count) }}
-          </span>
-          <span class="stat-item">
-            <el-icon><Star /></el-icon>
-            {{ formatNumber(video.like_count) }}
-          </span>
-        </div>
+        <span class="publish-time" v-if="video.publish_time">
+          <el-icon><Clock /></el-icon>
+          {{ formatPublishTime(video.publish_time) }}
+        </span>
+      </div>
+      <div class="video-stats">
+        <span class="stat-item">
+          <el-icon><VideoPlay /></el-icon>
+          {{ formatNumber(video.play_count) }}
+        </span>
+        <span class="stat-item">
+          <el-icon><Star /></el-icon>
+          {{ formatNumber(video.like_count) }}
+        </span>
       </div>
       <!-- 分析标签行 -->
       <div class="analysis-tags">
@@ -61,7 +65,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { Picture, PictureFilled, VideoPlay, Star, Check } from '@element-plus/icons-vue'
+import { Picture, PictureFilled, VideoPlay, Star, Check, Clock } from '@element-plus/icons-vue'
 
 const props = defineProps({
   video: {
@@ -145,6 +149,22 @@ const formatDuration = (seconds) => {
   const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
   return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+// 格式化发布时间
+const formatPublishTime = (time) => {
+  if (!time) return ''
+  const date = new Date(time)
+  const now = new Date()
+  const diff = now - date
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 7) return `${days}天前`
+  if (days < 30) return `${Math.floor(days / 7)}周前`
+  if (days < 365) return `${Math.floor(days / 30)}个月前`
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 </script>
 
@@ -285,7 +305,7 @@ const formatDuration = (seconds) => {
   align-items: center;
   font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .author {
@@ -295,9 +315,22 @@ const formatDuration = (seconds) => {
   white-space: nowrap;
 }
 
-.stats {
+.publish-time {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.publish-time .el-icon {
+  font-size: 12px;
+}
+
+.video-stats {
   display: flex;
   gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
 }
 
 .stat-item {

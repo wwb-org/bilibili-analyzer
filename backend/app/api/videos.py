@@ -52,7 +52,7 @@ def get_videos(
     keyword: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    order_by: str = Query("play_count", regex="^(play_count|like_count|publish_time)$"),
+    order_by: str = Query("play_count", regex="^(play_count|like_count|publish_time|coin_count|comment_count|danmaku_count|favorite_count|interaction_rate)$"),
     db: Session = Depends(get_db)
 ):
     """获取视频列表（支持分页、筛选、排序）"""
@@ -72,8 +72,21 @@ def get_videos(
     total = query.count()
 
     # 排序
-    order_column = getattr(Video, order_by)
-    query = query.order_by(order_column.desc())
+    if order_by == 'interaction_rate':
+        # 互动率排序：(like + coin + favorite + share) / play_count
+        # 使用 SQL 表达式计算
+        from sqlalchemy import case
+        interaction_expr = (
+            (func.coalesce(Video.like_count, 0) +
+             func.coalesce(Video.coin_count, 0) +
+             func.coalesce(Video.favorite_count, 0) +
+             func.coalesce(Video.share_count, 0)) * 1.0 /
+            case((Video.play_count > 0, Video.play_count), else_=1)
+        )
+        query = query.order_by(interaction_expr.desc())
+    else:
+        order_column = getattr(Video, order_by)
+        query = query.order_by(order_column.desc())
 
     # 分页
     offset = (page - 1) * page_size
@@ -83,6 +96,20 @@ def get_videos(
 
 
 # ==================== 统计接口（需放在 /{bvid} 之前）====================
+
+
+@router.get("/categories", response_model=List[str])
+def get_categories(db: Session = Depends(get_db)):
+    """获取所有分区列表（仅返回数据库中存在的分区）"""
+    categories = db.query(Video.category).filter(
+        Video.category.isnot(None),
+        Video.category != ''
+    ).distinct().all()
+
+    # 提取并排序
+    result = sorted([c[0] for c in categories if c[0]])
+    return result
+
 
 # 停用词列表
 STOPWORDS = set([
@@ -168,6 +195,8 @@ class VideoCompareResponse(BaseModel):
 def get_videos_stats(
     category: Optional[str] = None,
     keyword: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
     """获取视频统计数据（根据筛选条件）"""
@@ -178,6 +207,10 @@ def get_videos_stats(
         query = query.filter(Video.category == category)
     if keyword:
         query = query.filter(Video.title.contains(keyword))
+    if start_date:
+        query = query.filter(Video.publish_time >= start_date)
+    if end_date:
+        query = query.filter(Video.publish_time <= end_date)
 
     # 获取视频列表
     videos = query.all()
@@ -491,4 +524,83 @@ def get_video_analysis(bvid: str, db: Session = Depends(get_db)):
             avg_score=round(avg_score, 3)
         ),
         danmaku_keywords=top_keywords
+    )
+
+
+# ==================== 导出接口 ====================
+
+from fastapi.responses import StreamingResponse
+import csv
+import io
+
+
+@router.get("/export/csv")
+def export_videos_csv(
+    category: Optional[str] = None,
+    keyword: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    order_by: str = Query("play_count", regex="^(play_count|like_count|publish_time|coin_count|comment_count|danmaku_count|favorite_count)$"),
+    db: Session = Depends(get_db)
+):
+    """导出视频数据为CSV"""
+    query = db.query(Video)
+
+    # 筛选条件
+    if category:
+        query = query.filter(Video.category == category)
+    if keyword:
+        query = query.filter(Video.title.contains(keyword))
+    if start_date:
+        query = query.filter(Video.publish_time >= start_date)
+    if end_date:
+        query = query.filter(Video.publish_time <= end_date)
+
+    # 排序
+    order_column = getattr(Video, order_by)
+    query = query.order_by(order_column.desc())
+
+    # 限制最大导出数量
+    videos = query.limit(1000).all()
+
+    # 创建CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # 写入表头
+    writer.writerow([
+        'BVID', '标题', '分区', 'UP主', '播放量', '点赞数', '投币数',
+        '收藏数', '分享数', '弹幕数', '评论数', '时长(秒)', '发布时间'
+    ])
+
+    # 写入数据
+    for video in videos:
+        writer.writerow([
+            video.bvid,
+            video.title,
+            video.category or '',
+            video.author_name or '',
+            video.play_count or 0,
+            video.like_count or 0,
+            video.coin_count or 0,
+            video.favorite_count or 0,
+            video.share_count or 0,
+            video.danmaku_count or 0,
+            video.comment_count or 0,
+            video.duration or 0,
+            video.publish_time.strftime('%Y-%m-%d %H:%M:%S') if video.publish_time else ''
+        ])
+
+    # 返回CSV文件
+    output.seek(0)
+    # 添加BOM以支持Excel正确识别UTF-8
+    bom = '\ufeff'
+    content = bom + output.getvalue()
+
+    return StreamingResponse(
+        iter([content.encode('utf-8')]),
+        media_type='text/csv; charset=utf-8',
+        headers={
+            'Content-Disposition': f'attachment; filename=videos_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        }
     )
