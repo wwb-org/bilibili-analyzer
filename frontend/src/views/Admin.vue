@@ -15,12 +15,27 @@
           <span class="status-text">已连接</span>
         </div>
       </div>
-      <div class="status-card" :class="{ 'is-online': bilibiliLoggedIn }">
+      <div class="status-card" :class="{ 'is-online': bilibiliStatus.valid && bilibiliStatus.logged_in }">
         <el-icon class="status-icon"><User /></el-icon>
         <div class="status-info">
           <span class="status-name">B站账号</span>
-          <span class="status-text">{{ bilibiliLoggedIn ? '已登录' : '未登录' }}</span>
+          <span class="status-text" v-if="bilibiliStatus.valid && bilibiliStatus.logged_in">
+            {{ bilibiliStatus.username || '已登录' }}
+          </span>
+          <span class="status-text" v-else-if="bilibiliStatus.configured">
+            Cookie已过期
+          </span>
+          <span class="status-text" v-else>未配置</span>
         </div>
+        <el-button
+          size="small"
+          type="primary"
+          text
+          class="status-action"
+          @click="showCookieDialog = true"
+        >
+          <el-icon><Setting /></el-icon>
+        </el-button>
       </div>
       <div class="status-card" :class="{ 'is-online': redisStatus }">
         <el-icon class="status-icon"><DataLine /></el-icon>
@@ -224,6 +239,80 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- Cookie管理对话框 -->
+    <el-dialog v-model="showCookieDialog" title="管理B站Cookie" width="560px">
+      <div class="cookie-dialog-content">
+        <!-- 当前状态 -->
+        <div class="cookie-status">
+          <span class="cookie-status-label">当前状态：</span>
+          <el-tag
+            v-if="bilibiliStatus.valid && bilibiliStatus.logged_in"
+            type="success"
+            size="small"
+          >
+            已登录 - {{ bilibiliStatus.username }}
+          </el-tag>
+          <el-tag v-else-if="bilibiliStatus.configured" type="danger" size="small">
+            Cookie已过期
+          </el-tag>
+          <el-tag v-else type="info" size="small">未配置</el-tag>
+        </div>
+
+        <!-- Cookie输入 -->
+        <div class="cookie-input-section">
+          <div class="cookie-input-label">
+            <span>Cookie字符串：</span>
+            <el-link
+              type="primary"
+              :underline="false"
+              href="https://www.bilibili.com"
+              target="_blank"
+            >
+              如何获取Cookie?
+            </el-link>
+          </div>
+          <el-input
+            v-model="cookieForm.cookie"
+            type="textarea"
+            :rows="5"
+            placeholder="请粘贴从浏览器复制的Cookie字符串，需包含SESSDATA字段"
+          />
+        </div>
+
+        <!-- 验证结果 -->
+        <div class="cookie-verify-section" v-if="cookieVerifyResult">
+          <div class="verify-result" :class="{ 'is-success': cookieVerifyResult.valid }">
+            <el-icon v-if="cookieVerifyResult.valid"><CircleCheck /></el-icon>
+            <el-icon v-else><CircleClose /></el-icon>
+            <span v-if="cookieVerifyResult.valid && cookieVerifyResult.logged_in">
+              验证成功：{{ cookieVerifyResult.username }} (UID: {{ cookieVerifyResult.uid }})
+            </span>
+            <span v-else>{{ cookieVerifyResult.message }}</span>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="cookie-dialog-footer">
+          <el-button @click="handleVerifyCookie" :loading="cookieVerifying">
+            <el-icon><Search /></el-icon>
+            验证
+          </el-button>
+          <div class="footer-right">
+            <el-button @click="showCookieDialog = false">取消</el-button>
+            <el-button
+              type="primary"
+              @click="handleSaveCookie"
+              :loading="cookieSaving"
+              :disabled="!cookieVerifyResult?.valid || !cookieVerifyResult?.logged_in"
+            >
+              保存
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -240,7 +329,11 @@ import {
   Refresh,
   CaretRight,
   Clock,
-  User
+  User,
+  Setting,
+  Search,
+  CircleCheck,
+  CircleClose
 } from '@element-plus/icons-vue'
 import {
   getUsers,
@@ -251,13 +344,22 @@ import {
   backfillETL,
   startETLScheduler,
   stopETLScheduler,
-  getServicesStatus
+  getServicesStatus,
+  getBilibiliStatus,
+  verifyBilibiliCookie,
+  updateBilibiliCookie
 } from '@/api/admin'
 
 // ========== 状态 ==========
 const redisStatus = ref(false)
 const kafkaStatus = ref(false)
-const bilibiliLoggedIn = ref(false)
+const bilibiliStatus = ref({
+  configured: false,
+  valid: false,
+  logged_in: false,
+  username: '',
+  message: ''
+})
 const etlStatus = ref({ is_running: false, jobs: [] })
 
 const crawlConfig = reactive({
@@ -279,15 +381,38 @@ const backfillForm = reactive({
   end_date: null
 })
 
+// Cookie管理
+const showCookieDialog = ref(false)
+const cookieVerifying = ref(false)
+const cookieSaving = ref(false)
+const cookieForm = reactive({
+  cookie: ''
+})
+const cookieVerifyResult = ref(null)
+
 // ========== 方法 ==========
 const fetchServicesStatus = async () => {
   try {
     const res = await getServicesStatus()
     kafkaStatus.value = res.kafka?.available || false
     redisStatus.value = res.redis?.available || false
-    bilibiliLoggedIn.value = res.bilibili?.logged_in || false
   } catch (e) {
     console.error('获取服务状态失败', e)
+  }
+}
+
+const fetchBilibiliStatus = async () => {
+  try {
+    const res = await getBilibiliStatus()
+    bilibiliStatus.value = res
+  } catch (e) {
+    console.error('获取B站状态失败', e)
+    bilibiliStatus.value = {
+      configured: false,
+      valid: false,
+      logged_in: false,
+      message: '获取状态失败'
+    }
   }
 }
 
@@ -398,6 +523,54 @@ const handleBackfill = async () => {
   }
 }
 
+// ========== Cookie管理方法 ==========
+const handleVerifyCookie = async () => {
+  if (!cookieForm.cookie.trim()) {
+    ElMessage.warning('请输入Cookie')
+    return
+  }
+
+  cookieVerifying.value = true
+  cookieVerifyResult.value = null
+
+  try {
+    const res = await verifyBilibiliCookie(cookieForm.cookie.trim())
+    cookieVerifyResult.value = res
+  } catch (e) {
+    cookieVerifyResult.value = {
+      valid: false,
+      logged_in: false,
+      message: e.response?.data?.detail || '验证失败'
+    }
+  } finally {
+    cookieVerifying.value = false
+  }
+}
+
+const handleSaveCookie = async () => {
+  if (!cookieVerifyResult.value?.valid || !cookieVerifyResult.value?.logged_in) {
+    ElMessage.warning('请先验证Cookie')
+    return
+  }
+
+  cookieSaving.value = true
+
+  try {
+    await updateBilibiliCookie(cookieForm.cookie.trim())
+    ElMessage.success('Cookie保存成功')
+    showCookieDialog.value = false
+    // 重置表单
+    cookieForm.cookie = ''
+    cookieVerifyResult.value = null
+    // 刷新状态
+    await fetchBilibiliStatus()
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    cookieSaving.value = false
+  }
+}
+
 // ========== 工具函数 ==========
 const formatTime = (time) => {
   if (!time) return '-'
@@ -422,6 +595,7 @@ const getStatusText = (status) => {
 // ========== 生命周期 ==========
 onMounted(() => {
   fetchServicesStatus()
+  fetchBilibiliStatus()
   fetchETLStatus()
   fetchCrawlLogs()
   fetchUsers()
@@ -567,6 +741,79 @@ onMounted(() => {
 
 .etl-info {
   margin-top: 8px;
+}
+
+/* 状态卡片操作按钮 */
+.status-action {
+  margin-left: auto;
+  padding: 4px;
+}
+
+/* Cookie对话框 */
+.cookie-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cookie-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cookie-status-label {
+  font-size: 14px;
+  color: var(--text-regular);
+}
+
+.cookie-input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cookie-input-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  color: var(--text-regular);
+}
+
+.cookie-verify-section {
+  margin-top: 4px;
+}
+
+.verify-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+}
+
+.verify-result.is-success {
+  background: var(--el-color-success-light-9);
+  color: var(--el-color-success);
+}
+
+.verify-result .el-icon {
+  font-size: 16px;
+}
+
+.cookie-dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.footer-right {
+  display: flex;
+  gap: 12px;
 }
 
 /* 响应式适配 */

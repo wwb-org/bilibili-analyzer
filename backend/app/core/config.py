@@ -29,4 +29,16 @@ def get_settings():
     return Settings()
 
 
+def reload_settings():
+    """
+    重新加载配置
+
+    清除lru_cache缓存，使配置重新从.env文件读取
+    """
+    get_settings.cache_clear()
+    global settings
+    settings = get_settings()
+    return settings
+
+
 settings = get_settings()

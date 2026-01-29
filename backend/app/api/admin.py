@@ -235,3 +235,71 @@ def stop_etl_scheduler(admin: User = Depends(require_admin)):
     """停止ETL调度器"""
     etl_scheduler.stop()
     return {"message": "ETL调度器已停止", "status": etl_scheduler.get_status()}
+
+
+# ==================== B站Cookie管理接口 ====================
+
+class BilibiliCookieRequest(BaseModel):
+    """Cookie更新请求"""
+    cookie: str
+
+
+@router.get("/bilibili/status")
+def get_bilibili_status(admin: User = Depends(require_admin)):
+    """
+    获取B站Cookie状态
+
+    返回当前Cookie的验证状态和用户信息
+    """
+    from app.services.bilibili_auth import get_cookie_status
+    return get_cookie_status()
+
+
+@router.post("/bilibili/verify")
+def verify_bilibili_cookie(
+    request: BilibiliCookieRequest,
+    admin: User = Depends(require_admin)
+):
+    """
+    验证B站Cookie有效性
+
+    仅验证Cookie，不保存
+    """
+    from app.services.bilibili_auth import validate_cookie
+    return validate_cookie(request.cookie)
+
+
+@router.post("/bilibili/cookie")
+def update_bilibili_cookie(
+    request: BilibiliCookieRequest,
+    admin: User = Depends(require_admin)
+):
+    """
+    更新B站Cookie
+
+    验证Cookie有效后保存到.env文件
+    """
+    from app.services.bilibili_auth import validate_cookie, update_cookie_in_env
+    from app.core.config import reload_settings
+
+    # 先验证Cookie
+    result = validate_cookie(request.cookie)
+
+    if not result.get("valid") or not result.get("logged_in"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("message", "Cookie无效或已过期")
+        )
+
+    # 保存到.env文件
+    if not update_cookie_in_env(request.cookie):
+        raise HTTPException(status_code=500, detail="保存Cookie失败")
+
+    # 重新加载配置
+    reload_settings()
+
+    return {
+        "message": "Cookie更新成功",
+        "username": result.get("username"),
+        "uid": result.get("uid")
+    }

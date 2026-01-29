@@ -84,3 +84,30 @@ export const stopETLScheduler = () => {
 export const getServicesStatus = () => {
   return api.get('/live/status/services')
 }
+
+// ==================== B站Cookie管理 ====================
+
+/**
+ * 获取B站Cookie状态
+ * 返回当前Cookie的验证状态和用户信息
+ */
+export const getBilibiliStatus = () => {
+  return api.get('/admin/bilibili/status')
+}
+
+/**
+ * 验证B站Cookie
+ * @param {string} cookie - Cookie字符串
+ */
+export const verifyBilibiliCookie = (cookie) => {
+  return api.post('/admin/bilibili/verify', { cookie })
+}
+
+/**
+ * 更新B站Cookie
+ * 验证Cookie有效后保存到.env文件
+ * @param {string} cookie - Cookie字符串
+ */
+export const updateBilibiliCookie = (cookie) => {
+  return api.post('/admin/bilibili/cookie', { cookie })
+}

@@ -14,16 +14,17 @@ from dataclasses import dataclass, field
 
 from bilibili_api import live, select_client, request_settings, Credential
 
-from app.core.config import settings
-
 
 def _parse_cookie_to_credential() -> Optional[Credential]:
     """
     从配置的 BILIBILI_COOKIE 解析出 Credential 对象
 
+    使用动态Cookie获取方法，支持运行时更新
     Cookie 中需要包含：SESSDATA, bili_jct, buvid3
     """
-    cookie_str = settings.BILIBILI_COOKIE
+    from app.services.bilibili_auth import get_current_cookie
+
+    cookie_str = get_current_cookie()
     if not cookie_str:
         return None
 

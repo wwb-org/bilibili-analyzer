@@ -10,15 +10,15 @@ from app.services.crawler import BilibiliCrawler
 from app.services.nlp import NLPAnalyzer
 from app.models.models import Video, Comment, Danmaku, CrawlLog
 from app.core.database import SessionLocal
-from app.core.config import settings
 
 
 class CrawlService:
     """采集服务"""
 
     def __init__(self):
-        # 使用配置的Cookie初始化爬虫（登录后可获取更多评论）
-        self.crawler = BilibiliCrawler(cookie=settings.BILIBILI_COOKIE)
+        # 使用动态Cookie初始化爬虫（支持运行时更新）
+        from app.services.bilibili_auth import get_current_cookie
+        self.crawler = BilibiliCrawler(cookie=get_current_cookie())
         self.nlp = NLPAnalyzer()
 
     def _get_sentiment_label(self, score: float) -> str:
