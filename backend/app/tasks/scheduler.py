@@ -37,6 +37,8 @@ def crawl_popular_videos():
                 continue
 
             for raw_video in videos:
+                # 热门列表API已包含分区(tname)和基本信息
+                # 直接使用列表数据，分区信息是完整的
                 video_data = crawler.parse_video_data(raw_video)
 
                 # 检查是否已存在

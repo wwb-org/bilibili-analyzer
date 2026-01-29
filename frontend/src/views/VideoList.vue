@@ -1,111 +1,269 @@
 <template>
   <div class="video-list-container">
-    <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>视频数据</span>
-          <el-button type="primary" size="small" @click="fetchVideos">刷新</el-button>
-        </div>
-      </template>
+    <!-- 顶部操作栏 -->
+    <div class="page-header">
+      <div class="header-left">
+        <h2 class="page-title">视频数据</h2>
+        <span class="page-desc">全网视频趋势监控</span>
+      </div>
+      <div class="header-right">
+        <el-button :icon="Download" @click="handleExport">导出CSV</el-button>
+        <el-button type="primary" :icon="Refresh" circle @click="handleRefresh" :loading="loading" />
+      </div>
+    </div>
 
-      <!-- 筛选栏 -->
+    <!-- 统计面板 -->
+    <VideoStatsPanel :stats="statsData" :loading="statsLoading" />
+
+    <!-- 筛选区域 -->
+    <div class="filter-section">
       <el-form :inline="true" :model="filters" class="filter-form">
-        <el-form-item label="关键词">
-          <el-input v-model="filters.keyword" placeholder="搜索视频标题" clearable />
+        <el-form-item>
+          <el-input
+            v-model="filters.keyword"
+            placeholder="搜索视频标题"
+            clearable
+            prefix-icon="Search"
+            @keyup.enter="handleSearch"
+            class="search-input"
+          />
         </el-form-item>
-        <el-form-item label="分区">
-          <el-select v-model="filters.category" placeholder="全部分区" clearable>
-            <el-option label="全部" value="" />
-            <el-option label="游戏" value="游戏" />
-            <el-option label="生活" value="生活" />
-            <el-option label="科技" value="科技" />
-            <el-option label="娱乐" value="娱乐" />
+
+        <el-form-item>
+          <el-select v-model="filters.category" placeholder="全部分区" clearable class="filter-select" @change="handleFilterChange">
+            <el-option label="全部分区" value="" />
+            <el-option v-for="cat in categoryOptions" :key="cat" :label="cat" :value="cat" />
           </el-select>
         </el-form-item>
+
         <el-form-item>
-          <el-button type="primary" @click="handleSearch">搜索</el-button>
+          <el-date-picker
+            v-model="filters.dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="发布开始"
+            end-placeholder="发布结束"
+            :shortcuts="dateShortcuts"
+            class="date-picker"
+            @change="handleFilterChange"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item>
+          <el-select v-model="filters.order_by" class="sort-select" @change="fetchVideos">
+            <el-option label="播放最高" value="play_count" />
+            <el-option label="最受喜欢" value="like_count" />
+            <el-option label="投币最多" value="coin_count" />
+            <el-option label="收藏最多" value="favorite_count" />
+            <el-option label="评论最多" value="comment_count" />
+            <el-option label="弹幕最多" value="danmaku_count" />
+            <el-option label="互动率最高" value="interaction_rate" />
+            <el-option label="最新发布" value="publish_time" />
+          </el-select>
+        </el-form-item>
+
+        <!-- 对比模式开关 -->
+        <el-form-item class="compare-switch-item">
+          <div class="compare-switch-wrapper">
+            <span class="switch-label">对比模式</span>
+            <el-switch v-model="compareMode" @change="handleCompareModeChange" />
+          </div>
         </el-form-item>
       </el-form>
 
-      <!-- 视频列表 -->
-      <el-table :data="videos" v-loading="loading" stripe>
-        <el-table-column prop="bvid" label="BV号" width="130" />
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="author_name" label="UP主" width="120" />
-        <el-table-column prop="category" label="分区" width="80" />
-        <el-table-column prop="play_count" label="播放量" width="100">
-          <template #default="{ row }">
-            {{ formatNumber(row.play_count) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="like_count" label="点赞" width="80">
-          <template #default="{ row }">
-            {{ formatNumber(row.like_count) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="comment_count" label="评论" width="80" />
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link @click="viewDetail(row)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <!-- 对比操作栏 -->
+      <div v-if="compareMode" class="compare-toolbar">
+        <span class="selected-count">已选择 {{ selectedBvids.length }} / 5 个视频</span>
+        <el-button
+          type="primary"
+          :disabled="selectedBvids.length < 2"
+          @click="showCompareDialog"
+        >
+          开始对比
+        </el-button>
+        <el-button @click="clearSelection">清空选择</el-button>
+      </div>
+    </div>
 
-      <!-- 分页 -->
+    <!-- 视频网格 -->
+    <div class="video-content" v-loading="loading">
+      <!-- 空状态 -->
+      <el-empty
+        v-if="!loading && videos.length === 0"
+        description="暂无符合条件的视频"
+        :image-size="200"
+      />
+
+      <!-- 视频卡片网格 -->
+      <div v-else class="video-grid">
+        <VideoCard
+          v-for="video in videos"
+          :key="video.bvid"
+          :video="video"
+          :compare-mode="compareMode"
+          :selected="selectedBvids.includes(video.bvid)"
+          @click="handleCardClick"
+          @select="handleVideoSelect"
+        />
+      </div>
+    </div>
+
+    <!-- 分页 -->
+    <div class="pagination-wrapper">
       <el-pagination
         v-model:current-page="pagination.page"
         v-model:page-size="pagination.pageSize"
         :total="pagination.total"
-        :page-sizes="[10, 20, 50]"
-        layout="total, sizes, prev, pager, next"
+        :page-sizes="[12, 20, 24, 40]"
+        layout="total, prev, pager, next, jumper"
+        background
         @size-change="fetchVideos"
         @current-change="fetchVideos"
-        style="margin-top: 20px; justify-content: flex-end;"
       />
-    </el-card>
+    </div>
+
+    <!-- 视频详情弹窗 -->
+    <VideoDetailDialog
+      v-model="detailVisible"
+      :bvid="selectedBvid"
+    />
+
+    <!-- 视频对比弹窗 -->
+    <VideoCompareDialog
+      v-model="compareDialogVisible"
+      :bvids="selectedBvids"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import request from '@/api'
+import { Search, Refresh, Calendar, Download } from '@element-plus/icons-vue'
+import VideoCard from '@/components/video/VideoCard.vue'
+import VideoDetailDialog from '@/components/video/VideoDetailDialog.vue'
+import VideoStatsPanel from '@/components/video/VideoStatsPanel.vue'
+import VideoCompareDialog from '@/components/video/VideoCompareDialog.vue'
+import { getVideos, getVideosStats, getExportUrl, getCategories } from '@/api/videos'
 
 const loading = ref(false)
 const videos = ref([])
 
+// 分区选项
+const categoryOptions = ref([])
+
+// 统计数据
+const statsLoading = ref(false)
+const statsData = ref({
+  total_videos: 0,
+  total_play_count: 0,
+  avg_play_count: 0,
+  avg_interaction_rate: 0,
+  sentiment_distribution: { positive: 0, neutral: 0, negative: 0 },
+  category_distribution: []
+})
+
 const filters = reactive({
   keyword: '',
-  category: ''
+  category: '',
+  order_by: 'play_count',
+  dateRange: null  // [startDate, endDate]
 })
 
 const pagination = reactive({
   page: 1,
-  pageSize: 10,
+  pageSize: 20,
   total: 0
 })
 
-const formatNumber = (num) => {
-  if (!num) return '0'
-  if (num >= 10000) {
-    return (num / 10000).toFixed(1) + '万'
+// 详情弹窗状态
+const detailVisible = ref(false)
+const selectedBvid = ref('')
+
+// 对比模式状态
+const compareMode = ref(false)
+const selectedBvids = ref([])
+const compareDialogVisible = ref(false)
+
+// 时间快捷选项
+const dateShortcuts = [
+  {
+    text: '今天',
+    value: () => {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      return [today, new Date()]
+    }
+  },
+  {
+    text: '最近7天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 7)
+      return [start, end]
+    }
+  },
+  {
+    text: '最近30天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 30)
+      return [start, end]
+    }
+  },
+  {
+    text: '最近90天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 90)
+      return [start, end]
+    }
   }
-  return num.toString()
+]
+
+// 格式化日期为ISO字符串
+const formatDateISO = (date) => {
+  if (!date) return undefined
+  const d = new Date(date)
+  return d.toISOString()
+}
+
+// 获取统计数据
+const fetchStats = async () => {
+  statsLoading.value = true
+  try {
+    const res = await getVideosStats({
+      keyword: filters.keyword || undefined,
+      category: filters.category || undefined,
+      start_date: filters.dateRange ? formatDateISO(filters.dateRange[0]) : undefined,
+      end_date: filters.dateRange ? formatDateISO(filters.dateRange[1]) : undefined
+    })
+    statsData.value = res
+  } catch (error) {
+    console.error('获取统计数据失败:', error)
+  } finally {
+    statsLoading.value = false
+  }
 }
 
 const fetchVideos = async () => {
   loading.value = true
   try {
-    const res = await request.get('/api/videos', {
-      params: {
-        page: pagination.page,
-        page_size: pagination.pageSize,
-        keyword: filters.keyword || undefined,
-        category: filters.category || undefined
-      }
+    const res = await getVideos({
+      page: pagination.page,
+      page_size: pagination.pageSize,
+      keyword: filters.keyword || undefined,
+      category: filters.category || undefined,
+      order_by: filters.order_by,
+      start_date: filters.dateRange ? formatDateISO(filters.dateRange[0]) : undefined,
+      end_date: filters.dateRange ? formatDateISO(filters.dateRange[1]) : undefined
     })
-    videos.value = res.data.items || []
-    pagination.total = res.data.total || 0
+    videos.value = res.items || []
+    pagination.total = res.total || 0
   } catch (error) {
     ElMessage.error('获取视频列表失败')
   } finally {
@@ -113,32 +271,272 @@ const fetchVideos = async () => {
   }
 }
 
+// 刷新所有数据
+const handleRefresh = () => {
+  fetchVideos()
+  fetchStats()
+}
+
+// 筛选条件变化时同时更新统计
+const handleFilterChange = () => {
+  pagination.page = 1
+  fetchVideos()
+  fetchStats()
+}
+
 const handleSearch = () => {
   pagination.page = 1
   fetchVideos()
+  fetchStats()
 }
 
-const viewDetail = (row) => {
-  ElMessage.info(`查看视频详情: ${row.bvid}`)
+const handleCardClick = (bvid) => {
+  selectedBvid.value = bvid
+  detailVisible.value = true
+}
+
+// 对比模式相关方法
+const handleCompareModeChange = (val) => {
+  if (!val) {
+    selectedBvids.value = []
+  }
+}
+
+const handleVideoSelect = (bvid, checked) => {
+  if (checked) {
+    if (selectedBvids.value.length >= 5) {
+      ElMessage.warning('最多只能选择5个视频进行对比')
+      return
+    }
+    if (!selectedBvids.value.includes(bvid)) {
+      selectedBvids.value.push(bvid)
+    }
+  } else {
+    const index = selectedBvids.value.indexOf(bvid)
+    if (index > -1) {
+      selectedBvids.value.splice(index, 1)
+    }
+  }
+}
+
+const showCompareDialog = () => {
+  if (selectedBvids.value.length < 2) {
+    ElMessage.warning('请至少选择2个视频进行对比')
+    return
+  }
+  compareDialogVisible.value = true
+}
+
+const clearSelection = () => {
+  selectedBvids.value = []
+}
+
+// 导出CSV
+const handleExport = () => {
+  const exportUrl = getExportUrl({
+    category: filters.category || undefined,
+    keyword: filters.keyword || undefined,
+    start_date: filters.dateRange ? formatDateISO(filters.dateRange[0]) : undefined,
+    end_date: filters.dateRange ? formatDateISO(filters.dateRange[1]) : undefined,
+    order_by: filters.order_by
+  })
+
+  // 使用隐藏的 a 标签触发下载
+  const link = document.createElement('a')
+  link.href = exportUrl
+  link.download = ''
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+
+  ElMessage.success('正在导出数据，请稍候...')
+}
+
+// 加载分区选项
+const fetchCategories = async () => {
+  try {
+    const res = await getCategories()
+    categoryOptions.value = res || []
+  } catch (e) {
+    console.error('获取分区列表失败', e)
+  }
 }
 
 onMounted(() => {
+  fetchCategories()
   fetchVideos()
+  fetchStats()
 })
 </script>
 
 <style scoped>
 .video-list-container {
-  padding: 20px;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 24px;
 }
 
-.card-header {
+/* 顶部样式 */
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 24px;
+}
+
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.page-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 筛选区样式 */
+.filter-section {
+  margin-bottom: 24px;
+  background: var(--bg-white);
+  padding: 16px 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
 }
 
 .filter-form {
-  margin-bottom: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0;
+}
+
+.filter-form .el-form-item {
+  margin: 0;
+}
+
+.search-input {
+  width: 300px;
+}
+
+.filter-select {
+  width: 160px;
+}
+
+.date-picker {
+  width: 260px;
+}
+
+.sort-select {
+  width: 140px;
+}
+
+/* 对比模式开关 */
+.compare-switch-item {
+  margin-left: auto !important;
+}
+
+.compare-switch-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--bg-gray-light);
+  border-radius: 6px;
+}
+
+.switch-label {
+  font-size: 13px;
+  color: var(--text-regular);
+}
+
+/* 对比操作栏 */
+.compare-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.selected-count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* 视频网格样式 */
+.video-content {
+  min-height: 400px;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+/* 响应式调整 */
+@media (min-width: 1920px) {
+  .video-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (min-width: 1400px) and (max-width: 1919px) {
+  .video-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1100px) and (max-width: 1399px) {
+  .video-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 1099px) {
+  .video-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .video-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-form {
+    flex-direction: column;
+  }
+
+  .search-input,
+  .filter-select {
+    width: 100%;
+  }
+
+  .compare-switch-item {
+    margin-left: 0 !important;
+  }
+}
+
+/* 分页样式 */
+.pagination-wrapper {
+  margin-top: 40px;
+  display: flex;
+  justify-content: center;
 }
 </style>

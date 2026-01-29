@@ -24,6 +24,12 @@
       </div>
 
       <div class="status-group">
+        <el-tag v-if="bilibiliLoggedIn" type="success" effect="plain" size="small">
+          B站已登录
+        </el-tag>
+        <el-tag v-else type="warning" effect="plain" size="small">
+          B站未登录
+        </el-tag>
         <el-tag v-if="kafkaStatus" type="success" effect="plain" size="small">
           Kafka ✓
         </el-tag>
@@ -228,6 +234,7 @@ import { getServicesStatus } from '@/api/live'
 const newRoomId = ref('')
 const activeRoom = ref('global')
 const kafkaStatus = ref(false)
+const bilibiliLoggedIn = ref(false)
 
 // 房间数据结构
 const rooms = ref([])
@@ -654,8 +661,10 @@ const checkServicesStatus = async () => {
   try {
     const res = await getServicesStatus()
     kafkaStatus.value = res.kafka?.available || false
+    bilibiliLoggedIn.value = res.bilibili?.logged_in || false
   } catch {
     kafkaStatus.value = false
+    bilibiliLoggedIn.value = false
   }
 }
 

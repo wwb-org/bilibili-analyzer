@@ -532,7 +532,13 @@ async def get_room_ranking():
 
 @router.get("/status/services")
 async def get_services_status():
-    """获取后端服务状态（Kafka、Redis）"""
+    """获取后端服务状态（Kafka、Redis、B站登录）"""
+    from app.services.live_client import _parse_cookie_to_credential
+
+    # 检查B站登录状态
+    credential = _parse_cookie_to_credential()
+    bilibili_logged_in = credential is not None
+
     return {
         "kafka": {
             "available": is_kafka_available(),
@@ -540,6 +546,10 @@ async def get_services_status():
         },
         "redis": {
             "available": is_redis_available(),
+        },
+        "bilibili": {
+            "logged_in": bilibili_logged_in,
+            "message": "已登录" if bilibili_logged_in else "未登录（请配置 BILIBILI_COOKIE）",
         },
         "active_rooms": len(manager.get_active_rooms()),
     }

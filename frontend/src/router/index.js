@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '@/store/user'
+import { ElMessage } from 'element-plus'
 
 const routes = [
   {
@@ -34,6 +35,12 @@ const routes = [
         name: 'Live',
         component: () => import('@/views/Live.vue'),
         meta: { requiresAuth: true }
+      },
+      {
+        path: 'admin',
+        name: 'Admin',
+        component: () => import('@/views/Admin.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
       }
     ]
   }
@@ -54,10 +61,20 @@ router.beforeEach(async (to, from, next) => {
     } else if (!userStore.user) {
       // 验证token有效性
       const valid = await userStore.checkAuth()
-      valid ? next() : next('/login')
-    } else {
-      next()
+      if (!valid) {
+        next('/login')
+        return
+      }
     }
+
+    // 管理员权限检查
+    if (to.meta.requiresAdmin && !userStore.isAdmin) {
+      ElMessage.error('需要管理员权限')
+      next('/home')
+      return
+    }
+
+    next()
   } else {
     // 已登录用户访问登录/注册页时跳转到首页
     if ((to.path === '/login' || to.path === '/register') && userStore.token) {

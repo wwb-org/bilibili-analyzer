@@ -5,13 +5,51 @@ B站直播弹幕客户端
 - 连接/断开直播间
 - 事件回调机制（弹幕、礼物、进场、点赞、人气值）
 - 结构化的事件数据
+- 支持登录认证（配置Cookie后可获取更多数据）
 """
 import asyncio
 from datetime import datetime
 from typing import Callable, Optional, Any, Dict, List
 from dataclasses import dataclass, field
 
-from bilibili_api import live, select_client, request_settings
+from bilibili_api import live, select_client, request_settings, Credential
+
+
+def _parse_cookie_to_credential() -> Optional[Credential]:
+    """
+    从配置的 BILIBILI_COOKIE 解析出 Credential 对象
+
+    使用动态Cookie获取方法，支持运行时更新
+    Cookie 中需要包含：SESSDATA, bili_jct, buvid3
+    """
+    from app.services.bilibili_auth import get_current_cookie
+
+    cookie_str = get_current_cookie()
+    if not cookie_str:
+        return None
+
+    # 解析 Cookie 字符串
+    cookie_dict = {}
+    for item in cookie_str.split(';'):
+        item = item.strip()
+        if '=' in item:
+            key, value = item.split('=', 1)
+            cookie_dict[key.strip()] = value.strip()
+
+    # 检查必要字段
+    sessdata = cookie_dict.get('SESSDATA')
+    bili_jct = cookie_dict.get('bili_jct')
+    buvid3 = cookie_dict.get('buvid3')
+
+    if not sessdata:
+        print("[BiliLiveClient] Cookie 中缺少 SESSDATA，将以匿名方式连接")
+        return None
+
+    return Credential(
+        sessdata=sessdata,
+        bili_jct=bili_jct or "",
+        buvid3=buvid3 or ""
+    )
 
 
 @dataclass
@@ -79,6 +117,7 @@ class BiliLiveClient:
     def __init__(
         self,
         room_id: int,
+        credential: Optional[Credential] = None,
         client: str = "aiohttp",
         proxy: Optional[str] = None,
         impersonate: Optional[str] = None,
@@ -88,6 +127,7 @@ class BiliLiveClient:
 
         Args:
             room_id: 直播间ID（短号或真实房间号）
+            credential: B站登录凭证，None则尝试从配置读取
             client: HTTP客户端选择，aiohttp 或 curl_cffi
             proxy: 代理地址，如 http://127.0.0.1:7890
             impersonate: curl_cffi 浏览器指纹伪装，如 chrome131
@@ -96,6 +136,12 @@ class BiliLiveClient:
         self._client = client
         self._proxy = proxy
         self._impersonate = impersonate
+
+        # 凭证处理：优先使用传入的，否则从配置读取
+        if credential is not None:
+            self._credential = credential
+        else:
+            self._credential = _parse_cookie_to_credential()
 
         self._room: Optional[live.LiveDanmaku] = None
         self._is_connected = False
@@ -112,6 +158,11 @@ class BiliLiveClient:
     def is_connected(self) -> bool:
         """是否已连接"""
         return self._is_connected
+
+    @property
+    def is_logged_in(self) -> bool:
+        """是否已登录（有凭证）"""
+        return self._credential is not None
 
     def on_danmaku(self, callback: DanmakuCallback) -> "BiliLiveClient":
         """注册弹幕回调"""
@@ -270,7 +321,15 @@ class BiliLiveClient:
             return
 
         self._setup_client()
-        self._room = live.LiveDanmaku(self.room_id)
+
+        # 创建 LiveDanmaku，如果有凭证则传入
+        if self._credential:
+            self._room = live.LiveDanmaku(self.room_id, credential=self._credential)
+            print(f"[BiliLiveClient] 使用登录凭证连接直播间 {self.room_id}")
+        else:
+            self._room = live.LiveDanmaku(self.room_id)
+            print(f"[BiliLiveClient] 以匿名方式连接直播间 {self.room_id}")
+
         self._setup_event_handlers()
 
         self._is_connected = True

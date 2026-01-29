@@ -64,13 +64,22 @@ bilibili-analyzer/
 │   │   │   ├── Login.vue       # 登录页面（完成）
 │   │   │   ├── Register.vue    # 注册页面（完成）
 │   │   │   ├── Home.vue        # 首页仪表盘（完成）
-│   │   │   └── VideoList.vue   # 视频列表页（基础列表+筛选）
+│   │   │   └── VideoList.vue   # 视频列表页（卡片网格+详情弹窗）
 │   │   ├── components/         # 公共组件
-│   │   │   └── common/
-│   │   │       └── Layout.vue  # 全局布局
+│   │   │   ├── common/
+│   │   │   │   └── Layout.vue  # 全局布局
+│   │   │   └── video/          # 视频相关组件
+│   │   │       ├── VideoCard.vue          # 视频卡片（含互动率、情感标签、对比选择）
+│   │   │       ├── VideoPlayer.vue        # B站嵌入式播放器
+│   │   │       ├── VideoDetailDialog.vue  # 视频详情弹窗（含分析图表）
+│   │   │       ├── VideoStatsPanel.vue    # 筛选统计面板
+│   │   │       ├── VideoCompareDialog.vue # 多视频对比弹窗
+│   │   │       ├── CommentList.vue        # 评论列表组件
+│   │   │       └── DanmakuList.vue        # 弹幕列表组件
 │   │   ├── api/                # API请求封装
 │   │   │   ├── index.js        # Axios实例
-│   │   │   └── auth.js         # 认证API
+│   │   │   ├── auth.js         # 认证API
+│   │   │   └── videos.js       # 视频数据API
 │   │   ├── store/              # Pinia状态管理
 │   │   │   └── user.js          # 用户状态
 │   │   ├── router/             # Vue Router路由
@@ -148,7 +157,7 @@ bilibili-analyzer/
 | 1 | 登录 | Login.vue | 公开 | 用户登录 |
 | 2 | 注册 | Register.vue | 公开 | 用户注册 |
 | 3 | 首页仪表盘 | Home.vue | 用户 | 数据概览仪表盘 |
-| 4 | 视频数据 | VideoList.vue | 用户 | 视频列表（已实现基础列表+筛选） |
+| 4 | 视频数据 | VideoList.vue | 用户 | 视频卡片网格、详情弹窗（含播放器、评论） |
 | 5 | 评论分析 | Comments.vue | 用户 | 全局评论聚合分析 |
 | 6 | 热词分析 | Keywords.vue | 用户 | 全局热词聚合分析 |
 | 7 | 直播分析 | Live.vue | 用户 | **实时弹幕分析（亮点）** |
@@ -165,8 +174,10 @@ bilibili-analyzer/
 - 系统状态（仅管理员可见）
 
 #### 视频数据 (VideoList.vue)
-- 已实现：视频列表（关键词/分区筛选、分页、刷新）
-- 待实现：视频详情弹窗、导出Excel、更多筛选项
+- 顶部统计面板：视频数、平均播放、平均互动率、正面评论占比、分区分布饼图
+- 视频卡片网格：互动率标签、情感标签（热门/一般/冷门）
+- 对比模式：勾选多个视频，弹窗对比数据和图表
+- 详情侧边栏：播放器、数据统计、互动率雷达图、情感分布饼图、弹幕词云、评论/弹幕列表
 
 #### 评论分析 (Comments.vue)
 - 筛选栏：时间范围、视频分区、情感类型、关键词搜索
@@ -213,9 +224,14 @@ PUT  /password     # 修改密码
 
 ### 视频数据 (/api/videos)
 ```
-GET  /             # 视频列表（分页、筛选）
-GET  /{bvid}       # 视频详情
-（未实现）/ {bvid}/comments  # 视频评论列表
+GET  /                 # 视频列表（分页、筛选）
+GET  /categories       # 获取分区列表（动态，仅返回已有数据的分区）
+GET  /stats            # 筛选结果统计（视频数、平均播放、互动率、情感分布）
+POST /compare          # 多视频对比（最多5个）
+GET  /{bvid}           # 视频详情
+GET  /{bvid}/comments  # 视频评论列表（含情感标签）
+GET  /{bvid}/danmakus  # 视频弹幕列表
+GET  /{bvid}/analysis  # 视频分析数据（互动率、情感统计、弹幕热词）
 ```
 
 ### 统计分析 (/api/statistics)
@@ -304,7 +320,8 @@ GET  /keywords     # 导出热词数据Excel（未实现）
 ```
 GET  /users           # 用户列表
 GET  /crawl/logs      # 采集日志
-POST /crawl/start     # 启动采集任务（TODO）
+GET  /crawl/status    # 获取最近采集任务状态
+POST /crawl/start     # 启动采集任务（已实现，支持配置视频数和评论数）
 POST /crawl/stop      # 停止采集任务（未实现）
 ```
 
@@ -570,21 +587,46 @@ DATABASE_URL=mysql+pymysql://root:password@localhost:3306/bilibili_analyzer
 REDIS_URL=redis://localhost:6379/0
 SECRET_KEY=your-secret-key-here
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+BILIBILI_COOKIE=your-bilibili-cookie-here
 ```
+
+### B站 Cookie 配置（重要）
+
+**为什么需要 Cookie？**
+- B站评论 API 在未登录状态下有严格限制，每个视频只返回约 3 条评论
+- 配置 Cookie 后可正常获取完整评论数据
+
+**获取方法：**
+1. 用浏览器登录 B站 (bilibili.com)
+2. 按 F12 打开开发者工具 → Network（网络）标签
+3. 刷新页面，点击任意请求
+4. 在 Request Headers 中找到 `Cookie` 字段
+5. 复制完整 Cookie 字符串到 `.env` 文件
+
+**配置示例：**
+```
+BILIBILI_COOKIE=buvid3=xxx; SESSDATA=xxx; bili_jct=xxx; ...
+```
+
+**注意事项：**
+- Cookie 有效期通常 1-3 个月，过期后需重新获取
+- 配置后需重启后端服务生效
+- 不要泄露你的 Cookie（包含登录凭证）
 
 ---
 
 ## 开发注意事项
 
 1. **B站API频率限制**：约30次/分钟，采集间隔建议2秒以上
-2. **Kafka和Spark**：需要Java 8+环境
-3. **数据合规**：数据仅用于学术研究，不公开传播
-4. **默认账号**：admin / admin123
-5. **情感分析阈值**：
+2. **B站评论API限制**：未登录状态只返回约3条评论，需配置Cookie才能获取完整数据
+3. **Kafka和Spark**：需要Java 8+环境
+4. **数据合规**：数据仅用于学术研究，不公开传播
+5. **默认账号**：admin / admin123
+6. **情感分析阈值**：
    - 正面：score > 0.6
    - 中性：0.4 ≤ score ≤ 0.6
    - 负面：score < 0.4
-6. 前端开发时，严格遵循前端项目文件夹中的 STYLE_RULE.md 文件中的规范
+7. 前端开发时，严格遵循前端项目文件夹中的 STYLE_RULE.md 文件中的规范
 
 ---
 
@@ -654,17 +696,40 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（5/10 完成）
+### 前端页面（6/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
-- [x] VideoList.vue - 视频数据查询（基础列表+筛选）
+- [x] VideoList.vue - 视频数据分析（统计面板+卡片分析标签+详情图表+多视频对比）
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
 - [x] Live.vue - 直播弹幕分析（完整实现）
 - [ ] Prediction.vue - ML预测（未实现）
-- [ ] Admin.vue - 管理员后台（未实现）
+- [x] Admin.vue - 管理员后台（完整实现）
 - [ ] Profile.vue - 个人中心（未实现）
+
+**Admin.vue 功能详情：**
+
+*服务状态监控（已完成）：*
+- [x] MySQL/Redis/Kafka/ETL调度器 状态卡片
+- [x] B站账号登录状态显示
+- [x] 自动检测服务可用性
+
+*数据采集模块（已完成）：*
+- [x] 可配置采集视频数和每视频评论数
+- [x] 启动采集任务按钮
+- [x] 采集日志表格（状态、视频数、评论数、错误信息）
+- [x] 日志刷新功能
+
+*ETL调度管理（已完成）：*
+- [x] 启动/停止ETL调度器
+- [x] 手动执行ETL
+- [x] 历史数据回填（支持日期范围选择）
+- [x] 调度状态和下次执行时间显示
+
+*用户管理（已完成）：*
+- [x] 用户列表表格
+- [x] 显示用户角色（管理员/普通用户）
 
 **Live.vue 功能详情：**
 
@@ -672,7 +737,8 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 支持同时监控最多 4 个直播间
 - [x] 房间标签页切换
 - [x] 房间添加/移除管理
-- [x] Kafka / Redis 服务状态显示
+- [x] Kafka / Redis / B站登录状态显示
+- [x] 支持登录认证连接（配置Cookie后自动使用）
 
 *单房间详情视图（已完成）：*
 - [x] WebSocket 实时连接 B站直播间
@@ -696,16 +762,18 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] API基础框架 (axios实例、拦截器)
 - [x] 认证API封装 (auth.js)
 - [x] Live API封装 (live.js - WebSocket连接地址、HTTP接口)
+- [x] Admin API封装 (admin.js - 采集、ETL、用户管理接口)
 - [x] WebSocket工具类 (utils/websocket.js - 连接管理、事件分发、自动重连)
-- [ ] 其他API模块（videos, statistics, admin）
+- [x] 视频API封装 (videos.js - 列表、详情、统计、分析、对比、分区列表)
 - [x] 状态管理 (Pinia user store)
 - [x] 公共组件 (Layout)
 - [x] Vite配置（WebSocket代理支持）
+- [x] 路由守卫（管理员权限检查）
 
-### 后端功能（约85% 完成）
+### 后端功能（约90% 完成）
 - [x] 用户认证API（注册、登录、JWT）
 - [x] 视频数据API（列表、详情）
-- [ ] 视频评论API（未实现）
+- [x] 视频分析API（统计、分析、对比接口）
 - [x] 统计分析API（原始版 + 数仓优化版 /dw/*）
 - [x] 直播弹幕WebSocket服务（含NLP情感分析、词云）
 - [x] 数据采集模块（BilibiliCrawler + CrawlService，含情感分析）
@@ -713,9 +781,9 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 数据仓库ETL模块（DWD + DWS 两层）
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
+- [x] 管理员采集控制接口（/crawl/start 完整实现，/crawl/status 已实现）
 - [ ] 数据导出功能（未实现）
 - [ ] 直播数据持久化存储（可选扩展）
-- [ ] 管理员采集控制接口（/crawl/start 仅有TODO，/crawl/stop 未实现）
 
 **直播模块后端功能：**
 - [x] 多房间 WebSocket 连接管理
