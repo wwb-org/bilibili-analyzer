@@ -283,6 +283,139 @@ BV1zz4y1c7mZ
       </div>
     </div>
 
+    <!-- ML 模型管理模块 -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h3 class="panel-title">机器学习模型</h3>
+          <span class="panel-subtitle">热度预测与相似推荐模型管理</span>
+        </div>
+        <el-button text type="primary" @click="fetchModelInfo">
+          <el-icon><Refresh /></el-icon>
+          刷新状态
+        </el-button>
+      </div>
+      <div class="panel-body">
+        <!-- 模型状态卡片 -->
+        <div class="model-status-grid">
+          <div class="model-card">
+            <div class="model-card-header">
+              <el-icon class="model-icon" :class="{ 'is-loaded': modelInfo.predictor?.loaded }">
+                <TrendCharts />
+              </el-icon>
+              <div class="model-info">
+                <span class="model-name">热度预测模型</span>
+                <el-tag v-if="modelInfo.predictor?.loaded" type="success" size="small">已加载</el-tag>
+                <el-tag v-else type="warning" size="small">未加载</el-tag>
+              </div>
+            </div>
+            <div class="model-details" v-if="modelInfo.predictor?.loaded">
+              <div class="detail-item">
+                <span class="detail-label">模型类型</span>
+                <span class="detail-value">{{ modelInfo.predictor.model_type || 'XGBoost' }}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">特征数量</span>
+                <span class="detail-value">{{ modelInfo.predictor.feature_count || '-' }}</span>
+              </div>
+            </div>
+            <div class="model-details" v-else>
+              <p class="no-model-hint">{{ modelInfo.predictor?.message || '模型尚未训练，请点击下方按钮训练' }}</p>
+            </div>
+            <el-button
+              type="primary"
+              :loading="trainPredictorLoading"
+              @click="handleTrainPredictor"
+              class="train-btn"
+            >
+              <el-icon><Cpu /></el-icon>
+              {{ modelInfo.predictor?.loaded ? '重新训练' : '训练模型' }}
+            </el-button>
+          </div>
+
+          <div class="model-card">
+            <div class="model-card-header">
+              <el-icon class="model-icon" :class="{ 'is-loaded': modelInfo.recommender?.loaded }">
+                <Connection />
+              </el-icon>
+              <div class="model-info">
+                <span class="model-name">相似推荐模型</span>
+                <el-tag v-if="modelInfo.recommender?.loaded" type="success" size="small">已加载</el-tag>
+                <el-tag v-else type="warning" size="small">未加载</el-tag>
+              </div>
+            </div>
+            <div class="model-details" v-if="modelInfo.recommender?.loaded">
+              <div class="detail-item">
+                <span class="detail-label">模型类型</span>
+                <span class="detail-value">TF-IDF</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">视频数量</span>
+                <span class="detail-value">{{ modelInfo.recommender.video_count || '-' }}</span>
+              </div>
+            </div>
+            <div class="model-details" v-else>
+              <p class="no-model-hint">模型尚未训练，请点击下方按钮训练</p>
+            </div>
+            <el-button
+              type="primary"
+              :loading="trainRecommenderLoading"
+              @click="handleTrainRecommender"
+              class="train-btn"
+            >
+              <el-icon><Cpu /></el-icon>
+              {{ modelInfo.recommender?.loaded ? '重新训练' : '训练模型' }}
+            </el-button>
+          </div>
+        </div>
+
+        <!-- 一键训练 -->
+        <div class="train-all-section">
+          <el-button
+            type="success"
+            size="large"
+            :loading="trainAllLoading"
+            @click="handleTrainAll"
+          >
+            <el-icon><Cpu /></el-icon>
+            一键训练所有模型
+          </el-button>
+          <span class="train-hint">训练需要一定时间，请耐心等待</span>
+        </div>
+
+        <!-- 训练结果 -->
+        <div class="train-result-section" v-if="lastTrainResult">
+          <div class="section-header">
+            <span class="section-title">最近训练结果</span>
+          </div>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="训练时间">
+              {{ lastTrainResult.trained_at || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="预测模型">
+              <el-tag v-if="lastTrainResult.predictor?.success" type="success" size="small">成功</el-tag>
+              <el-tag v-else type="danger" size="small">失败</el-tag>
+              <span v-if="lastTrainResult.predictor?.train_samples" class="result-detail">
+                ({{ lastTrainResult.predictor.train_samples }} 样本, R²={{ lastTrainResult.predictor.test_r2?.toFixed(3) }})
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="推荐模型">
+              <el-tag v-if="lastTrainResult.recommender?.success" type="success" size="small">成功</el-tag>
+              <el-tag v-else type="danger" size="small">失败</el-tag>
+              <span v-if="lastTrainResult.recommender?.video_count" class="result-detail">
+                ({{ lastTrainResult.recommender.video_count }} 视频)
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="错误信息" v-if="lastTrainResult.predictor?.error || lastTrainResult.recommender?.error">
+              <el-text type="danger" size="small">
+                {{ lastTrainResult.predictor?.error || lastTrainResult.recommender?.error }}
+              </el-text>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+      </div>
+    </div>
+
     <!-- 用户管理模块 -->
     <div class="panel">
       <div class="panel-header">
@@ -429,7 +562,9 @@ import {
   Search,
   CircleCheck,
   CircleClose,
-  Check
+  Check,
+  TrendCharts,
+  Cpu
 } from '@element-plus/icons-vue'
 import {
   getUsers,
@@ -446,6 +581,12 @@ import {
   verifyBilibiliCookie,
   updateBilibiliCookie
 } from '@/api/admin'
+import {
+  getModelInfo,
+  trainPredictor,
+  trainRecommender,
+  trainAllModels
+} from '@/api/ml'
 
 // ========== 状态 ==========
 const redisStatus = ref(false)
@@ -499,6 +640,13 @@ const cookieForm = reactive({
   cookie: ''
 })
 const cookieVerifyResult = ref(null)
+
+// ML 模型管理
+const modelInfo = ref({ predictor: {}, recommender: {} })
+const trainPredictorLoading = ref(false)
+const trainRecommenderLoading = ref(false)
+const trainAllLoading = ref(false)
+const lastTrainResult = ref(null)
 
 // ========== 方法 ==========
 const fetchServicesStatus = async () => {
@@ -768,6 +916,105 @@ const handleSaveCookie = async () => {
   }
 }
 
+// ========== ML 模型管理方法 ==========
+const fetchModelInfo = async () => {
+  try {
+    const res = await getModelInfo()
+    modelInfo.value = res
+  } catch (e) {
+    console.error('获取模型信息失败', e)
+  }
+}
+
+const handleTrainPredictor = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要训练热度预测模型吗？训练需要一定时间。',
+      '确认训练',
+      { type: 'info' }
+    )
+
+    trainPredictorLoading.value = true
+    const res = await trainPredictor()
+
+    if (res.success) {
+      ElMessage.success('热度预测模型训练成功')
+      lastTrainResult.value = { predictor: res, trained_at: res.trained_at }
+    } else {
+      ElMessage.error('训练失败: ' + (res.error || '未知错误'))
+      lastTrainResult.value = { predictor: res }
+    }
+
+    await fetchModelInfo()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('训练失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    trainPredictorLoading.value = false
+  }
+}
+
+const handleTrainRecommender = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要训练推荐模型吗？训练需要一定时间。',
+      '确认训练',
+      { type: 'info' }
+    )
+
+    trainRecommenderLoading.value = true
+    const res = await trainRecommender()
+
+    if (res.success) {
+      ElMessage.success('推荐模型训练成功')
+      lastTrainResult.value = { recommender: res, trained_at: res.trained_at }
+    } else {
+      ElMessage.error('训练失败: ' + (res.error || '未知错误'))
+      lastTrainResult.value = { recommender: res }
+    }
+
+    await fetchModelInfo()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('训练失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    trainRecommenderLoading.value = false
+  }
+}
+
+const handleTrainAll = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要训练所有模型吗？这可能需要几分钟时间。',
+      '确认训练',
+      { type: 'info' }
+    )
+
+    trainAllLoading.value = true
+    const res = await trainAllModels()
+
+    lastTrainResult.value = res
+
+    if (res.predictor?.success && res.recommender?.success) {
+      ElMessage.success('所有模型训练成功')
+    } else if (res.predictor?.success || res.recommender?.success) {
+      ElMessage.warning('部分模型训练成功，请查看详情')
+    } else {
+      ElMessage.error('模型训练失败，请查看详情')
+    }
+
+    await fetchModelInfo()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('训练失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    trainAllLoading.value = false
+  }
+}
+
 // ========== 工具函数 ==========
 const formatTime = (time) => {
   if (!time) return '-'
@@ -796,6 +1043,7 @@ onMounted(() => {
   fetchETLStatus()
   fetchCrawlLogs()
   fetchUsers()
+  fetchModelInfo()
 })
 </script>
 
@@ -1080,6 +1328,106 @@ onMounted(() => {
   gap: 12px;
 }
 
+/* ML 模型管理样式 */
+.model-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.model-card {
+  padding: 20px;
+  background: var(--bg-gray-light);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.model-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-icon {
+  font-size: 32px;
+  color: var(--text-secondary);
+}
+
+.model-icon.is-loaded {
+  color: var(--color-success);
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.model-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.detail-label {
+  color: var(--text-secondary);
+}
+
+.detail-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.no-model-hint {
+  font-size: 13px;
+  color: var(--text-placeholder);
+  margin: 0;
+}
+
+.train-btn {
+  margin-top: auto;
+}
+
+.train-all-section {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  background: var(--bili-blue-light);
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+
+.train-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.train-result-section {
+  margin-top: 8px;
+}
+
+.result-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 8px;
+}
+
 /* 响应式适配 */
 @media (max-width: 1400px) {
   .status-grid {
@@ -1105,6 +1453,15 @@ onMounted(() => {
 
   .etl-actions {
     flex-wrap: wrap;
+  }
+
+  .model-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .train-all-section {
+    flex-direction: column;
+    text-align: center;
   }
 }
 </style>

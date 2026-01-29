@@ -20,6 +20,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **待实现特色**：
 - Kafka + Spark Streaming 实时流处理
+
+**已实现特色**：
 - XGBoost热度预测 + TF-IDF内容推荐
 
 ---
@@ -79,7 +81,8 @@ bilibili-analyzer/
 │   │   ├── api/                # API请求封装
 │   │   │   ├── index.js        # Axios实例
 │   │   │   ├── auth.js         # 认证API
-│   │   │   └── videos.js       # 视频数据API
+│   │   │   ├── videos.js       # 视频数据API
+│   │   │   └── ml.js           # 机器学习预测API
 │   │   ├── store/              # Pinia状态管理
 │   │   │   └── user.js          # 用户状态
 │   │   ├── router/             # Vue Router路由
@@ -95,7 +98,8 @@ bilibili-analyzer/
 │   │   │   ├── videos.py       # 视频数据
 │   │   │   ├── statistics.py   # 统计分析（含数仓优化接口）
 │   │   │   ├── admin.py        # 管理员功能（含ETL管理）
-│   │   │   └── live.py         # 直播弹幕分析 WebSocket
+│   │   │   ├── live.py         # 直播弹幕分析 WebSocket
+│   │   │   └── ml.py           # 机器学习预测API
 │   │   ├── core/               # 核心配置
 │   │   │   ├── config.py       # 应用配置
 │   │   │   ├── database.py     # 数据库连接
@@ -114,6 +118,11 @@ bilibili-analyzer/
 │   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
 │   │   │   ├── live_client.py  # B站直播弹幕客户端封装
 │   │   │   └── analyzer.py     # 数据分析
+│   │   ├── ml/                 # 机器学习模块
+│   │   │   ├── features.py     # 特征工程
+│   │   │   ├── predictor.py    # 热度预测服务
+│   │   │   ├── recommender.py  # 相似推荐服务
+│   │   │   └── model_manager.py # 模型训练管理
 │   │   └── tasks/              # 定时任务
 │   │       └── scheduler.py    # 采集定时调度（定时采集+热词更新）
 │   ├── tests/                  # 测试脚本目录
@@ -196,9 +205,11 @@ bilibili-analyzer/
 - 情感分布饼图 + 情感趋势图 + 实时词云
 
 #### ML预测 (Prediction.vue)
-- 热度预测：选择视频，预测7天后播放量，展示特征重要性
-- 相似视频推荐：选择视频，展示TOP10相似视频
-- 预测历史记录、模型信息面板
+- 左侧视频选择器：搜索、分区筛选、排序、分页
+- 点击视频一键分析：并行调用热度预测 + 相似推荐
+- 热度预测：7天后播放量、增长率、热度等级、特征重要性图表
+- 相似推荐：TOP10相似视频（可点击继续分析）
+- 支持手动输入 BV 号（折叠面板）
 
 #### 管理员后台 (Admin.vue)
 - 用户管理：列表、启用/禁用、修改角色
@@ -324,6 +335,80 @@ GET  /crawl/status    # 获取最近采集任务状态
 POST /crawl/start     # 启动采集任务（已实现，支持配置视频数和评论数）
 POST /crawl/stop      # 停止采集任务（未实现）
 ```
+
+### ML预测 (/api/ml)
+```
+POST /predict/bvid      # 根据BVID预测7天后播放量
+POST /predict/params    # 根据手动输入参数预测
+GET  /recommend/{bvid}  # 获取相似视频推荐（支持top_k、same_category、same_author参数）
+GET  /model-info        # 获取模型状态信息
+POST /train/predictor   # 训练热度预测模型（管理员）
+POST /train/recommender # 训练推荐模型（管理员）
+POST /train/all         # 训练所有模型（管理员）
+```
+
+**预测请求示例（BVID模式）：**
+```json
+POST /api/ml/predict/bvid
+{
+  "bvid": "BV1xx411c7mD"
+}
+```
+
+**预测请求示例（手动输入模式）：**
+```json
+POST /api/ml/predict/params
+{
+  "play_count": 10000,
+  "like_count": 500,
+  "coin_count": 100,
+  "favorite_count": 200,
+  "category": "游戏",
+  "video_age_days": 7,
+  "duration_minutes": 5
+}
+```
+
+**预测结果示例：**
+```json
+{
+  "success": true,
+  "bvid": "BV1xx411c7mD",
+  "title": "视频标题",
+  "current_play_count": 10000,
+  "predicted_play_count": 15000,
+  "play_increment": 5000,
+  "growth_rate": 50.0,
+  "heat_level": "rising",
+  "prediction_days": 7,
+  "feature_importance": {
+    "like_rate": 0.25,
+    "interaction_rate": 0.20,
+    ...
+  }
+}
+```
+
+**推荐结果示例：**
+```json
+{
+  "success": true,
+  "target": {
+    "bvid": "BV1xx411c7mD",
+    "title": "目标视频",
+    "category": "游戏"
+  },
+  "recommendations": [
+    {
+      "bvid": "BV2yy522d8nE",
+      "title": "推荐视频1",
+      "similarity_score": 0.85,
+      "same_category": true
+    }
+  ],
+  "total": 10,
+  "method": "tfidf_multi_score"
+}
 
 ---
 
@@ -556,9 +641,43 @@ spark-submit spark_streaming.py
 
 ### 机器学习模型训练
 ```bash
-cd ml
-python train_xgboost.py      # 训练热度预测模型
+# 方式1：通过API训练（推荐，需要管理员登录）
+# 访问 http://localhost:8000/docs 使用 Swagger UI
+# 或使用以下curl命令：
+
+# 训练所有模型
+curl -X POST http://localhost:8000/api/ml/train/all \
+  -H "Authorization: Bearer <your_token>"
+
+# 单独训练热度预测模型
+curl -X POST http://localhost:8000/api/ml/train/predictor \
+  -H "Authorization: Bearer <your_token>"
+
+# 单独训练推荐模型
+curl -X POST http://localhost:8000/api/ml/train/recommender \
+  -H "Authorization: Bearer <your_token>"
+
+# 方式2：直接调用Python
+cd backend
+python -c "
+from app.core.database import SessionLocal
+from app.ml.model_manager import model_manager
+db = SessionLocal()
+result = model_manager.train_all(db)
+print(result)
+db.close()
+"
 ```
+
+**模型文件位置：**
+- `backend/ml_models/xgboost_predictor.pkl` - 热度预测模型
+- `backend/ml_models/tfidf_vectorizer.pkl` - TF-IDF向量化器
+- `backend/ml_models/tfidf_matrix.pkl` - TF-IDF矩阵
+- `backend/ml_models/video_index.pkl` - 视频索引映射
+
+**训练要求：**
+- 热度预测模型：需要至少100条视频数据
+- 推荐模型：需要至少50条视频数据
 
 ### 直播弹幕功能测试
 ```bash
@@ -696,7 +815,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（6/10 完成）
+### 前端页面（7/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
@@ -704,7 +823,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [ ] Comments.vue - 评论分析（未实现）
 - [ ] Keywords.vue - 热词分析（未实现）
 - [x] Live.vue - 直播弹幕分析（完整实现）
-- [ ] Prediction.vue - ML预测（未实现）
+- [x] Prediction.vue - ML预测（完整实现）
 - [x] Admin.vue - 管理员后台（完整实现）
 - [ ] Profile.vue - 个人中心（未实现）
 
@@ -765,6 +884,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Admin API封装 (admin.js - 采集、ETL、用户管理接口)
 - [x] WebSocket工具类 (utils/websocket.js - 连接管理、事件分发、自动重连)
 - [x] 视频API封装 (videos.js - 列表、详情、统计、分析、对比、分区列表)
+- [x] ML API封装 (ml.js - 热度预测、相似推荐、模型训练)
 - [x] 状态管理 (Pinia user store)
 - [x] 公共组件 (Layout)
 - [x] Vite配置（WebSocket代理支持）
@@ -782,6 +902,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
 - [x] 管理员采集控制接口（/crawl/start 完整实现，/crawl/status 已实现）
+- [x] 机器学习模块（热度预测 + 相似推荐）
 - [ ] 数据导出功能（未实现）
 - [ ] 直播数据持久化存储（可选扩展）
 
@@ -802,8 +923,8 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ### 大数据模块
 - [x] 数据仓库ETL（已集成到 backend/app/etl/）
+- [x] 机器学习模块（已集成到 backend/app/ml/）
 - [ ] streaming/ - Kafka + Spark Streaming（目录不存在）
-- [ ] ml/ - 机器学习模型训练（目录不存在）
 
 ---
 
@@ -813,7 +934,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 2. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
 3. **多维度分析**：播放量、互动率、情感等多指标综合分析
 4. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
+5. **机器学习预测**：XGBoost热度预测 + TF-IDF多维度相似推荐
 
 ### 待实现的创新点
 - Kafka + Spark Streaming 实时流处理
-- XGBoost热度预测 + TF-IDF内容推荐
