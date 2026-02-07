@@ -7,7 +7,6 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.services.crawler import BilibiliCrawler
-from app.services.nlp import NLPAnalyzer
 from app.models.models import Video, Comment, Danmaku, CrawlLog
 from app.core.database import SessionLocal
 
@@ -19,16 +18,6 @@ class CrawlService:
         # 使用动态Cookie初始化爬虫（支持运行时更新）
         from app.services.bilibili_auth import get_current_cookie
         self.crawler = BilibiliCrawler(cookie=get_current_cookie())
-        self.nlp = NLPAnalyzer()
-
-    def _get_sentiment_label(self, score: float) -> str:
-        """根据情感分数获取标签"""
-        if score >= 0.6:
-            return 'positive'
-        elif score <= 0.4:
-            return 'negative'
-        else:
-            return 'neutral'
 
     def crawl_popular_videos(
         self,
@@ -217,9 +206,8 @@ class CrawlService:
                     if existing:
                         continue
 
-                    # 情感分析
-                    sentiment_score = self.nlp.analyze_sentiment(content)
-                    sentiment_label = self._get_sentiment_label(sentiment_score)
+                    # 细粒度情绪分析 + 三分类兼容分数
+                    emotion_result = self.crawler.emotion.analyze_emotion(content)
 
                     # 创建评论记录
                     comment = Comment(
@@ -227,7 +215,11 @@ class CrawlService:
                         video_id=video_id,
                         content=content,
                         user_name=user_name,
-                        sentiment_score=sentiment_score,
+                        sentiment_score=emotion_result.sentiment_score,
+                        emotion_label=emotion_result.emotion_label,
+                        emotion_scores_json=emotion_result.emotion_scores,
+                        emotion_model_version=emotion_result.model_version,
+                        emotion_analyzed_at=emotion_result.analyzed_at,
                         like_count=like_count
                     )
                     db.add(comment)

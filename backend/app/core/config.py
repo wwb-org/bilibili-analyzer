@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # B站Cookie（可选，用于获取更多数据）
     BILIBILI_COOKIE: str = ""
 
+    # 细粒度情绪模型配置
+    EMOTION_MODEL_NAME: str = "SchuylerH/bert-multilingual-go-emtions"
+    EMOTION_DEVICE: str = "cpu"
+    EMOTION_MAX_LENGTH: int = 256
+    EMOTION_BATCH_SIZE: int = 16
+
     class Config:
         env_file = ".env"
 

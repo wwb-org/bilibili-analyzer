@@ -32,10 +32,16 @@ CREATE TABLE `comments`  (
   `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
   `sentiment_score` float NULL DEFAULT NULL,
+  `emotion_label` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `emotion_scores_json` json NULL,
+  `emotion_model_version` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `emotion_analyzed_at` datetime NULL DEFAULT NULL,
   `like_count` int NULL DEFAULT NULL,
   `created_at` datetime NULL DEFAULT NULL,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `idx_rpid`(`rpid` ASC) USING BTREE,
+  INDEX `idx_comments_emotion_label`(`emotion_label` ASC) USING BTREE,
+  INDEX `idx_comments_video_emotion`(`video_id` ASC, `emotion_label` ASC) USING BTREE,
   INDEX `ix_comments_video_id`(`video_id` ASC) USING BTREE,
   INDEX `ix_comments_id`(`id` ASC) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 127 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = Dynamic;

@@ -2,7 +2,19 @@
 数据模型定义
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, String, Text, Float, DateTime, Boolean, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    Integer,
+    BigInteger,
+    String,
+    Text,
+    Float,
+    DateTime,
+    Boolean,
+    UniqueConstraint,
+    Index,
+    JSON,
+)
 from app.core.database import Base
 import enum
 
@@ -59,8 +71,16 @@ class Comment(Base):
     content = Column(Text, nullable=False)
     user_name = Column(String(100))
     sentiment_score = Column(Float)  # 情感分数 0-1
+    emotion_label = Column(String(32), index=True)  # GoEmotions 28类主情绪
+    emotion_scores_json = Column(JSON)  # GoEmotions 28类情绪概率分布
+    emotion_model_version = Column(String(128))
+    emotion_analyzed_at = Column(DateTime)
     like_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_comments_video_emotion", "video_id", "emotion_label"),
+    )
 
 
 class Danmaku(Base):

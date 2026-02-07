@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.models import Video, Comment
 from app.core.database import SessionLocal
+from app.services.emotion import EmotionAnalyzer
 
 
 class BilibiliCrawler:
@@ -21,6 +22,7 @@ class BilibiliCrawler:
 
     def __init__(self, cookie: str = ""):
         self.session = requests.Session()
+        self.emotion = EmotionAnalyzer()
         self.session.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Referer': 'https://www.bilibili.com',
@@ -279,12 +281,20 @@ class BilibiliCrawler:
                 if existing:
                     continue
 
-                # 创建评论记录（暂不做情感分析）
+                # 细粒度情绪分析 + 三分类兼容分数
+                emotion_result = self.emotion.analyze_emotion(content)
+
+                # 创建评论记录
                 comment = Comment(
                     rpid=rpid,
                     video_id=video_id,
                     content=content,
                     user_name=user_name,
+                    sentiment_score=emotion_result.sentiment_score,
+                    emotion_label=emotion_result.emotion_label,
+                    emotion_scores_json=emotion_result.emotion_scores,
+                    emotion_model_version=emotion_result.model_version,
+                    emotion_analyzed_at=emotion_result.analyzed_at,
                     like_count=like_count
                 )
                 db.add(comment)

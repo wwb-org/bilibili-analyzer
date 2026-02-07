@@ -192,6 +192,10 @@
               <div class="chart-title">评论词云</div>
               <div ref="wordcloudChartRef" class="chart-container"></div>
             </div>
+            <div class="chart-card chart-card--full">
+              <div class="chart-title">细粒度情绪分布</div>
+              <div ref="emotionBarChartRef" class="chart-container"></div>
+            </div>
           </div>
 
           <!-- 高赞评论 -->
@@ -206,8 +210,8 @@
                   <div class="comment-text">{{ comment.content }}</div>
                   <div class="comment-meta">
                     <span class="user">{{ comment.user_name }}</span>
-                    <el-tag :type="getSentimentTagType(comment.sentiment_label)" size="small">
-                      {{ getSentimentText(comment.sentiment_label) }}
+                    <el-tag :type="getCommentTagType(comment)" size="small">
+                      {{ getCommentTagText(comment) }}
                     </el-tag>
                     <span class="likes">{{ comment.like_count }} 赞</span>
                   </div>
@@ -221,10 +225,15 @@
             <div class="section-header">
               <span class="section-title">评论列表</span>
               <div class="section-filters">
-                <el-select v-model="commentSentimentFilter" size="small" placeholder="全部情感" clearable @change="loadCommentList">
+                <el-select v-model="commentSentimentFilter" size="small" placeholder="三分类筛选" clearable @change="handleCommentFilterChange">
                   <el-option label="正面" value="positive" />
                   <el-option label="中性" value="neutral" />
                   <el-option label="负面" value="negative" />
+                </el-select>
+                <el-select v-model="commentEmotionFilter" size="small" placeholder="细粒度筛选" clearable filterable @change="handleCommentFilterChange">
+                  <el-option-group v-for="group in emotionGroups" :key="group.label" :label="group.label">
+                    <el-option v-for="item in group.options" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-option-group>
                 </el-select>
                 <el-select v-model="commentSortBy" size="small" @change="loadCommentList">
                   <el-option label="点赞最多" value="like_count" />
@@ -236,8 +245,8 @@
               <div v-for="comment in commentList" :key="comment.id" class="comment-item">
                 <div class="comment-header">
                   <span class="user-name">{{ comment.user_name }}</span>
-                  <el-tag :type="getSentimentTagType(comment.sentiment_label)" size="small">
-                    {{ getSentimentText(comment.sentiment_label) }}
+                  <el-tag :type="getCommentTagType(comment)" size="small">
+                    {{ getCommentTagText(comment) }}
                   </el-tag>
                 </div>
                 <div class="comment-body">{{ comment.content }}</div>
@@ -377,8 +386,54 @@ const commentTotal = ref(0)
 const commentPage = ref(1)
 const commentPageSize = ref(20)
 const commentSentimentFilter = ref('')
+const commentEmotionFilter = ref('')
 const commentSortBy = ref('like_count')
 const loadingComments = ref(false)
+const emotionGroups = [
+  {
+    label: '正面情绪',
+    options: [
+      { label: '钦佩', value: 'admiration' },
+      { label: '愉悦', value: 'amusement' },
+      { label: '赞同', value: 'approval' },
+      { label: '关爱', value: 'caring' },
+      { label: '渴望', value: 'desire' },
+      { label: '兴奋', value: 'excitement' },
+      { label: '感激', value: 'gratitude' },
+      { label: '喜悦', value: 'joy' },
+      { label: '喜爱', value: 'love' },
+      { label: '乐观', value: 'optimism' },
+      { label: '自豪', value: 'pride' },
+    ]
+  },
+  {
+    label: '中性情绪',
+    options: [
+      { label: '中性', value: 'neutral' },
+      { label: '困惑', value: 'confusion' },
+      { label: '好奇', value: 'curiosity' },
+      { label: '恍然', value: 'realization' },
+      { label: '释然', value: 'relief' },
+      { label: '惊讶', value: 'surprise' },
+    ]
+  },
+  {
+    label: '负面情绪',
+    options: [
+      { label: '愤怒', value: 'anger' },
+      { label: '烦躁', value: 'annoyance' },
+      { label: '失望', value: 'disappointment' },
+      { label: '反对', value: 'disapproval' },
+      { label: '厌恶', value: 'disgust' },
+      { label: '尴尬', value: 'embarrassment' },
+      { label: '恐惧', value: 'fear' },
+      { label: '悲痛', value: 'grief' },
+      { label: '紧张', value: 'nervousness' },
+      { label: '懊悔', value: 'remorse' },
+      { label: '悲伤', value: 'sadness' },
+    ]
+  }
+]
 
 // ========== 多视频对比 ==========
 const selectedBvids = ref([])
@@ -387,10 +442,12 @@ const compareResult = ref(null)
 // ========== 图表引用 ==========
 const pieChartRef = ref(null)
 const wordcloudChartRef = ref(null)
+const emotionBarChartRef = ref(null)
 const compareBarChartRef = ref(null)
 const compareRadarChartRef = ref(null)
 let pieChart = null
 let wordcloudChart = null
+let emotionBarChart = null
 let compareBarChart = null
 let compareRadarChart = null
 
@@ -476,24 +533,26 @@ const analyzeVideo = async (video) => {
   wordcloudData.value = []
   commentList.value = []
   commentPage.value = 1
+  commentSentimentFilter.value = ''
+  commentEmotionFilter.value = ''
 
   disposeCharts()
 
   try {
-    const [statsRes, topRes, wcRes] = await Promise.all([
+    const [statsRes, topRes] = await Promise.all([
       getCommentStats(video.bvid),
-      getTopComments(video.bvid, 10),
-      getCommentWordcloud(video.bvid, { top_k: 50 })
+      getTopComments(video.bvid, 10)
     ])
 
     commentStats.value = statsRes
     topComments.value = topRes.items || []
-    wordcloudData.value = wcRes.words || []
+    await loadWordcloud()
 
     analyzing.value = false
     await nextTick()
     renderPieChart()
     renderWordcloudChart()
+    renderEmotionBarChart()
 
     await loadCommentList()
   } catch (e) {
@@ -512,6 +571,7 @@ const loadCommentList = async () => {
       sort_by: commentSortBy.value
     }
     if (commentSentimentFilter.value) params.sentiment = commentSentimentFilter.value
+    if (commentEmotionFilter.value) params.emotion = commentEmotionFilter.value
 
     const res = await getCommentList(selectedVideo.value.bvid, params)
     commentList.value = res.items || []
@@ -521,6 +581,28 @@ const loadCommentList = async () => {
   } finally {
     loadingComments.value = false
   }
+}
+
+const loadWordcloud = async () => {
+  if (!selectedVideo.value) return
+
+  try {
+    const params = { top_k: 50 }
+    if (commentSentimentFilter.value) params.sentiment = commentSentimentFilter.value
+    if (commentEmotionFilter.value) params.emotion = commentEmotionFilter.value
+    const res = await getCommentWordcloud(selectedVideo.value.bvid, params)
+    wordcloudData.value = res.words || []
+  } catch (e) {
+    console.error('加载词云失败', e)
+    wordcloudData.value = []
+  }
+}
+
+const handleCommentFilterChange = async () => {
+  commentPage.value = 1
+  await Promise.all([loadCommentList(), loadWordcloud()])
+  await nextTick()
+  renderWordcloudChart()
 }
 
 // ========== 多视频对比 ==========
@@ -551,7 +633,11 @@ const startCompare = async () => {
 // ========== 导出 ==========
 const handleExport = () => {
   if (!selectedVideo.value) return
-  const url = getCommentExportUrl(selectedVideo.value.bvid, commentSentimentFilter.value)
+  const url = getCommentExportUrl(
+    selectedVideo.value.bvid,
+    commentSentimentFilter.value,
+    commentEmotionFilter.value
+  )
   window.open(url, '_blank')
 }
 
@@ -559,10 +645,12 @@ const handleExport = () => {
 const disposeCharts = () => {
   pieChart?.dispose()
   wordcloudChart?.dispose()
+  emotionBarChart?.dispose()
   compareBarChart?.dispose()
   compareRadarChart?.dispose()
   pieChart = null
   wordcloudChart = null
+  emotionBarChart = null
   compareBarChart = null
   compareRadarChart = null
 }
@@ -587,9 +675,45 @@ const renderPieChart = () => {
 }
 
 const renderWordcloudChart = () => {
-  if (!wordcloudChartRef.value || wordcloudData.value.length === 0) return
-  wordcloudChart = echarts.init(wordcloudChartRef.value)
-  const colorMap = { positive: '#00B578', neutral: '#9499A0', negative: '#F56C6C' }
+  if (!wordcloudChartRef.value) return
+  if (!wordcloudChart) {
+    wordcloudChart = echarts.init(wordcloudChartRef.value)
+  }
+  if (wordcloudData.value.length === 0) {
+    wordcloudChart.clear()
+    return
+  }
+  const sentimentColorMap = { positive: '#00B578', neutral: '#9499A0', negative: '#F56C6C' }
+  const emotionColorMap = {
+    admiration: '#00B578',
+    amusement: '#FFB020',
+    anger: '#EF4444',
+    annoyance: '#F97316',
+    approval: '#36D399',
+    caring: '#F472B6',
+    confusion: '#94A3B8',
+    curiosity: '#38BDF8',
+    desire: '#F59E0B',
+    disappointment: '#DC2626',
+    disapproval: '#EA580C',
+    disgust: '#92400E',
+    embarrassment: '#FB7185',
+    excitement: '#FB923C',
+    fear: '#7C3AED',
+    gratitude: '#10B981',
+    grief: '#1E40AF',
+    joy: '#FBBF24',
+    love: '#EC4899',
+    nervousness: '#6D28D9',
+    optimism: '#06B6D4',
+    pride: '#A855F7',
+    realization: '#818CF8',
+    relief: '#6EE7B7',
+    remorse: '#BE185D',
+    sadness: '#3B82F6',
+    surprise: '#60A5FA',
+    neutral: '#9499A0'
+  }
   wordcloudChart.setOption({
     series: [{
       type: 'wordCloud',
@@ -598,9 +722,58 @@ const renderWordcloudChart = () => {
       rotationRange: [-45, 45],
       gridSize: 8,
       textStyle: {
-        color: (params) => colorMap[params.data.sentiment] || '#61666D'
+        color: (params) => {
+          return emotionColorMap[params.data.emotion] || sentimentColorMap[params.data.sentiment] || '#61666D'
+        }
       },
       data: wordcloudData.value
+    }]
+  })
+}
+
+const emotionLabelMap = {
+  admiration: '钦佩', amusement: '愉悦', anger: '愤怒', annoyance: '烦躁',
+  approval: '赞同', caring: '关爱', confusion: '困惑', curiosity: '好奇',
+  desire: '渴望', disappointment: '失望', disapproval: '反对', disgust: '厌恶',
+  embarrassment: '尴尬', excitement: '兴奋', fear: '恐惧', gratitude: '感激',
+  grief: '悲痛', joy: '喜悦', love: '喜爱', nervousness: '紧张',
+  optimism: '乐观', pride: '自豪', realization: '恍然', relief: '释然',
+  remorse: '懊悔', sadness: '悲伤', surprise: '惊讶', neutral: '中性'
+}
+
+const emotionColorMapFull = {
+  admiration: '#00B578', amusement: '#FFB020', anger: '#EF4444', annoyance: '#F97316',
+  approval: '#36D399', caring: '#F472B6', confusion: '#94A3B8', curiosity: '#38BDF8',
+  desire: '#F59E0B', disappointment: '#DC2626', disapproval: '#EA580C', disgust: '#92400E',
+  embarrassment: '#FB7185', excitement: '#FB923C', fear: '#7C3AED', gratitude: '#10B981',
+  grief: '#1E40AF', joy: '#FBBF24', love: '#EC4899', nervousness: '#6D28D9',
+  optimism: '#06B6D4', pride: '#A855F7', realization: '#818CF8', relief: '#6EE7B7',
+  remorse: '#BE185D', sadness: '#3B82F6', surprise: '#60A5FA', neutral: '#9499A0'
+}
+
+const renderEmotionBarChart = () => {
+  if (!emotionBarChartRef.value || !commentStats.value?.emotion_distribution?.counts) return
+  emotionBarChart = echarts.init(emotionBarChartRef.value)
+  const counts = commentStats.value.emotion_distribution.counts || {}
+
+  // 过滤 count=0 的标签，按数量降序排列（水平柱状图从下到上所以用升序）
+  const entries = Object.entries(counts)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => a[1] - b[1])
+
+  const labels = entries.map(([k]) => emotionLabelMap[k] || k)
+  const values = entries.map(([, v]) => v)
+  const colors = entries.map(([k]) => emotionColorMapFull[k] || '#9499A0')
+
+  emotionBarChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: '3%', right: '10%', bottom: '3%', top: '3%', containLabel: true },
+    xAxis: { type: 'value', name: '评论数' },
+    yAxis: { type: 'category', data: labels, axisLabel: { fontSize: 11 } },
+    series: [{
+      type: 'bar',
+      data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i] } })),
+      barMaxWidth: 20
     }]
   })
 }
@@ -658,9 +831,36 @@ const getSentimentTagType = (sentiment) => {
   return map[sentiment] || 'info'
 }
 
+const getEmotionTagType = (emotion) => {
+  const positiveSet = new Set(['admiration', 'amusement', 'approval', 'caring', 'desire', 'excitement', 'gratitude', 'joy', 'love', 'optimism', 'pride'])
+  const neutralSet = new Set(['neutral', 'confusion', 'curiosity', 'realization', 'relief', 'surprise'])
+  if (positiveSet.has(emotion)) return 'success'
+  if (neutralSet.has(emotion)) return 'info'
+  return 'danger'
+}
+
 const getSentimentText = (sentiment) => {
   const map = { positive: '正面为主', neutral: '中性为主', negative: '负面为主' }
   return map[sentiment] || '未知'
+}
+
+const getSentimentSimpleText = (sentiment) => {
+  const map = { positive: '正面', neutral: '中性', negative: '负面' }
+  return map[sentiment] || '未知'
+}
+
+const getEmotionText = (emotion) => {
+  return emotionLabelMap[emotion] || '未知'
+}
+
+const getCommentTagType = (comment) => {
+  if (comment?.emotion_label) return getEmotionTagType(comment.emotion_label)
+  return getSentimentTagType(comment?.sentiment_label)
+}
+
+const getCommentTagText = (comment) => {
+  if (comment?.emotion_label) return getEmotionText(comment.emotion_label)
+  return getSentimentSimpleText(comment?.sentiment_label)
 }
 
 const formatTime = (time) => {
@@ -671,6 +871,7 @@ const formatTime = (time) => {
 const handleResize = () => {
   pieChart?.resize()
   wordcloudChart?.resize()
+  emotionBarChart?.resize()
   compareBarChart?.resize()
   compareRadarChart?.resize()
 }
@@ -991,6 +1192,10 @@ onUnmounted(() => {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.chart-card--full {
+  grid-column: 1 / -1;
 }
 
 .chart-card {
