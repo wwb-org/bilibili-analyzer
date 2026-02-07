@@ -135,11 +135,14 @@
         <div class="ranking-section">
           <div class="section-header">
             <span class="section-title">热词排行榜</span>
-            <el-select v-model="orderBy" size="small" @change="loadRanking">
-              <el-option label="频次最高" value="frequency" />
-              <el-option label="趋势最热" value="trend" />
-              <el-option label="热度最高" value="heat" />
-            </el-select>
+            <div class="ranking-actions">
+              <el-select v-model="orderBy" size="small" @change="loadRanking">
+                <el-option label="频次最高" value="frequency" />
+                <el-option label="趋势最热" value="trend" />
+                <el-option label="热度最高" value="heat" />
+              </el-select>
+              <el-button size="small" @click="openCompareDialog">趋势对比</el-button>
+            </div>
           </div>
           <div class="ranking-list" v-loading="loadingRanking">
             <div
@@ -244,7 +247,158 @@
               </div>
             </div>
           </div>
+
+          <!-- 贡献视频 -->
+          <div class="chart-card">
+            <div class="chart-title">贡献视频 TOP10（样例估算）</div>
+            <el-table
+              :data="contributorVideos"
+              size="small"
+              stripe
+              max-height="320"
+              v-loading="loadingContributors"
+              empty-text="暂无样例贡献视频"
+            >
+              <el-table-column prop="title" label="视频" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="estimated_contribution" label="贡献值" width="90">
+                <template #default="{ row }">{{ row.estimated_contribution.toFixed(1) }}</template>
+              </el-table-column>
+              <el-table-column prop="play_increment" label="播放增量" width="90" />
+              <el-table-column prop="comment_increment" label="评论增量" width="90" />
+              <el-table-column label="互动率" width="90">
+                <template #default="{ row }">{{ (row.interaction_rate * 100).toFixed(1) }}%</template>
+              </el-table-column>
+              <el-table-column label="操作" width="80">
+                <template #default="{ row }">
+                  <el-button type="primary" link @click="goToVideo(row.bvid)">查看</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 实用洞察 -->
+    <div class="actionable-content">
+      <div class="action-card">
+        <div class="section-header">
+          <span class="section-title">异动榜</span>
+          <span class="section-tip">基于当前周期与上一统计日对比</span>
+        </div>
+        <div class="action-grid" v-loading="loadingMovers">
+          <div class="action-list">
+            <div class="action-list-title">爆发词 TOP10</div>
+            <div
+              v-for="item in moversData.rising"
+              :key="`r-${item.word}`"
+              class="action-item rise"
+              @click="selectKeyword(item.word)"
+            >
+              <span class="action-word">{{ item.word }}</span>
+              <span class="action-metric">+{{ (item.change_rate * 100).toFixed(0) }}%</span>
+            </div>
+            <el-empty v-if="!loadingMovers && moversData.rising.length === 0" description="暂无爆发词" :image-size="48" />
+          </div>
+          <div class="action-list">
+            <div class="action-list-title">下滑词 TOP10</div>
+            <div
+              v-for="item in moversData.falling"
+              :key="`f-${item.word}`"
+              class="action-item fall"
+              @click="selectKeyword(item.word)"
+            >
+              <span class="action-word">{{ item.word }}</span>
+              <span class="action-metric">{{ (item.change_rate * 100).toFixed(0) }}%</span>
+            </div>
+            <el-empty v-if="!loadingMovers && moversData.falling.length === 0" description="暂无下滑词" :image-size="48" />
+          </div>
+        </div>
+      </div>
+
+      <div class="action-card">
+        <div class="section-header">
+          <span class="section-title">机会榜 / 风险榜</span>
+          <span class="section-tip">综合增长、情感、互动样本占比</span>
+        </div>
+        <div class="action-grid" v-loading="loadingOpportunityRisk">
+          <div class="action-list">
+            <div class="action-list-title">机会词 TOP10</div>
+            <div
+              v-for="item in opportunityRiskData.opportunities"
+              :key="`o-${item.word}`"
+              class="action-item opportunity"
+              @click="selectKeyword(item.word)"
+            >
+              <span class="action-word">{{ item.word }}</span>
+              <span class="action-metric">{{ item.score.toFixed(2) }}</span>
+            </div>
+            <el-empty v-if="!loadingOpportunityRisk && opportunityRiskData.opportunities.length === 0" description="暂无机会词" :image-size="48" />
+          </div>
+          <div class="action-list">
+            <div class="action-list-title">风险词 TOP10</div>
+            <div
+              v-for="item in opportunityRiskData.risks"
+              :key="`k-${item.word}`"
+              class="action-item risk"
+              @click="selectKeyword(item.word)"
+            >
+              <span class="action-word">{{ item.word }}</span>
+              <span class="action-metric">{{ item.score.toFixed(2) }}</span>
+            </div>
+            <el-empty v-if="!loadingOpportunityRisk && opportunityRiskData.risks.length === 0" description="暂无风险词" :image-size="48" />
+          </div>
+        </div>
+      </div>
+
+      <div class="action-card">
+        <div class="section-header">
+          <span class="section-title">预警订阅</span>
+          <el-button type="primary" size="small" @click="saveAlertSubscription" :loading="savingSubscription">保存配置</el-button>
+        </div>
+
+        <el-form :inline="true" class="alert-form">
+          <el-form-item label="启用">
+            <el-switch v-model="alertSubscription.enabled" />
+          </el-form-item>
+          <el-form-item label="最低频次">
+            <el-input-number v-model="alertSubscription.min_frequency" :min="1" :max="10000" size="small" />
+          </el-form-item>
+          <el-form-item label="增长阈值">
+            <el-input-number v-model="alertSubscription.growth_threshold" :min="0" :max="100" :step="0.1" :precision="2" size="small" />
+          </el-form-item>
+          <el-form-item label="机会情感阈值">
+            <el-input-number v-model="alertSubscription.opportunity_sentiment_threshold" :min="0" :max="1" :step="0.05" :precision="2" size="small" />
+          </el-form-item>
+          <el-form-item label="风险情感阈值">
+            <el-input-number v-model="alertSubscription.negative_sentiment_threshold" :min="0" :max="1" :step="0.05" :precision="2" size="small" />
+          </el-form-item>
+          <el-form-item label="高互动阈值">
+            <el-input-number v-model="alertSubscription.interaction_threshold" :min="0" :max="1" :step="0.01" :precision="2" size="small" />
+          </el-form-item>
+          <el-form-item label="命中条数">
+            <el-input-number v-model="alertSubscription.top_k" :min="1" :max="100" size="small" />
+          </el-form-item>
+        </el-form>
+
+        <div class="section-header">
+          <span class="section-title">预警命中</span>
+          <el-button size="small" @click="loadAlertHits" :loading="loadingAlertHits">刷新命中</el-button>
+        </div>
+        <el-table :data="alertHits" size="small" stripe max-height="320" v-loading="loadingAlertHits" empty-text="当前无命中">
+          <el-table-column prop="word" label="热词" min-width="120" />
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">
+              <el-tag :type="row.alert_type === 'risk' ? 'danger' : 'success'" size="small">
+                {{ row.alert_type === 'risk' ? '风险' : '机会' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="涨幅" width="90">
+            <template #default="{ row }">{{ (row.change_rate * 100).toFixed(0) }}%</template>
+          </el-table-column>
+          <el-table-column prop="reason" label="原因" min-width="220" show-overflow-tooltip />
+        </el-table>
       </div>
     </div>
 
@@ -276,7 +430,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download, Top, Bottom, Minus } from '@element-plus/icons-vue'
@@ -286,9 +440,15 @@ import {
   getKeywordOverview,
   getKeywordWordcloud,
   getKeywordRanking,
+  getKeywordMovers,
+  getKeywordOpportunityRisk,
   getKeywordDetail,
+  getKeywordContributors,
+  getKeywordAlertSubscription,
+  updateKeywordAlertSubscription,
+  getKeywordAlertHits,
   compareKeywords,
-  getExportUrl
+  exportKeywords
 } from '@/api/keywords'
 import { getCategories } from '@/api/videos'
 
@@ -301,6 +461,11 @@ const loadingWordcloud = ref(false)
 const loadingRanking = ref(false)
 const loadingDetail = ref(false)
 const loadingCompare = ref(false)
+const loadingMovers = ref(false)
+const loadingOpportunityRisk = ref(false)
+const loadingContributors = ref(false)
+const loadingAlertHits = ref(false)
+const savingSubscription = ref(false)
 
 // 筛选条件
 const dateRange = ref([])
@@ -346,6 +511,27 @@ const pageSize = ref(20)
 // 详情
 const selectedWord = ref('')
 const keywordDetail = ref(null)
+const contributorVideos = ref([])
+
+// P0 洞察
+const moversData = reactive({
+  rising: [],
+  falling: []
+})
+const opportunityRiskData = reactive({
+  opportunities: [],
+  risks: []
+})
+const alertSubscription = reactive({
+  enabled: true,
+  min_frequency: 20,
+  growth_threshold: 1,
+  opportunity_sentiment_threshold: 0.6,
+  negative_sentiment_threshold: 0.4,
+  interaction_threshold: 0.05,
+  top_k: 10
+})
+const alertHits = ref([])
 
 // 对比
 const compareDialogVisible = ref(false)
@@ -386,6 +572,16 @@ const getSentimentClass = (score) => {
   return 'neutral'
 }
 
+const getTrendDays = () => {
+  if (dateRange.value?.length === 2) {
+    const start = new Date(dateRange.value[0])
+    const end = new Date(dateRange.value[1])
+    const diff = Math.floor((end - start) / (24 * 3600 * 1000)) + 1
+    return Math.max(1, Math.min(diff, 30))
+  }
+  return 7
+}
+
 const handleSearchDebounce = () => {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
@@ -395,6 +591,11 @@ const handleSearchDebounce = () => {
 }
 
 const handleFilterChange = () => {
+  currentPage.value = 1
+  selectedWord.value = ''
+  keywordDetail.value = null
+  contributorVideos.value = []
+  disposeDetailCharts()
   loadAllData()
 }
 
@@ -471,9 +672,98 @@ const loadRanking = async () => {
   }
 }
 
+const loadMovers = async () => {
+  loadingMovers.value = true
+  try {
+    const params = {
+      ...getFilterParams(),
+      top_k: 10,
+      min_frequency: alertSubscription.min_frequency
+    }
+    const res = await getKeywordMovers(params)
+    moversData.rising = res.rising || []
+    moversData.falling = res.falling || []
+  } catch (e) {
+    console.error('获取异动榜失败', e)
+  } finally {
+    loadingMovers.value = false
+  }
+}
+
+const loadOpportunityRisk = async () => {
+  loadingOpportunityRisk.value = true
+  try {
+    const params = {
+      ...getFilterParams(),
+      top_k: 10,
+      min_frequency: alertSubscription.min_frequency,
+      interaction_threshold: alertSubscription.interaction_threshold
+    }
+    const res = await getKeywordOpportunityRisk(params)
+    opportunityRiskData.opportunities = res.opportunities || []
+    opportunityRiskData.risks = res.risks || []
+  } catch (e) {
+    console.error('获取机会/风险榜失败', e)
+  } finally {
+    loadingOpportunityRisk.value = false
+  }
+}
+
+const loadAlertSubscription = async () => {
+  try {
+    const res = await getKeywordAlertSubscription()
+    Object.assign(alertSubscription, res || {})
+  } catch (e) {
+    console.error('获取预警配置失败', e)
+  }
+}
+
+const saveAlertSubscription = async () => {
+  savingSubscription.value = true
+  try {
+    const payload = {
+      enabled: alertSubscription.enabled,
+      min_frequency: alertSubscription.min_frequency,
+      growth_threshold: alertSubscription.growth_threshold,
+      opportunity_sentiment_threshold: alertSubscription.opportunity_sentiment_threshold,
+      negative_sentiment_threshold: alertSubscription.negative_sentiment_threshold,
+      interaction_threshold: alertSubscription.interaction_threshold,
+      top_k: alertSubscription.top_k
+    }
+    const res = await updateKeywordAlertSubscription(payload)
+    Object.assign(alertSubscription, res || {})
+    ElMessage.success('预警配置已保存')
+    await Promise.all([loadMovers(), loadOpportunityRisk(), loadAlertHits()])
+  } catch (e) {
+    ElMessage.error('保存预警配置失败')
+  } finally {
+    savingSubscription.value = false
+  }
+}
+
+const loadAlertHits = async () => {
+  loadingAlertHits.value = true
+  try {
+    const params = { ...getFilterParams() }
+    const res = await getKeywordAlertHits(params)
+    alertHits.value = res.hits || []
+  } catch (e) {
+    console.error('获取预警命中失败', e)
+  } finally {
+    loadingAlertHits.value = false
+  }
+}
+
 const loadAllData = async () => {
   loading.value = true
-  await Promise.all([loadOverview(), loadWordcloud(), loadRanking()])
+  await Promise.all([
+    loadOverview(),
+    loadWordcloud(),
+    loadRanking(),
+    loadMovers(),
+    loadOpportunityRisk(),
+    loadAlertHits()
+  ])
   loading.value = false
 }
 
@@ -482,11 +772,15 @@ const selectKeyword = async (word) => {
   if (selectedWord.value === word) return
   selectedWord.value = word
   loadingDetail.value = true
+  contributorVideos.value = []
   disposeDetailCharts()
 
   try {
-    const res = await getKeywordDetail(word, { days: 7 })
+    const detailParams = { days: getTrendDays() }
+    if (filters.category) detailParams.category = filters.category
+    const res = await getKeywordDetail(word, detailParams)
     keywordDetail.value = res
+    await loadContributors(word)
     await nextTick()
     renderDetailCharts()
   } catch (e) {
@@ -508,8 +802,11 @@ const disposeDetailCharts = () => {
 }
 
 const renderWordcloud = () => {
-  if (!wordcloudRef.value || wordcloudData.value.length === 0) return
   if (wordcloudChart) wordcloudChart.dispose()
+  if (!wordcloudRef.value || wordcloudData.value.length === 0) {
+    wordcloudChart = null
+    return
+  }
 
   wordcloudChart = echarts.init(wordcloudRef.value)
   const colorMap = {
@@ -616,14 +913,42 @@ const handleResize = () => {
 }
 
 // ========== 导出 ==========
-const handleExport = () => {
-  const params = {
-    format: 'csv',
-    ...getFilterParams(),
-    top_k: 500
+const handleExport = async () => {
+  try {
+    const params = {
+      format: 'csv',
+      ...getFilterParams(),
+      top_k: 500
+    }
+    const blob = await exportKeywords(params)
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `keywords_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('导出失败')
   }
-  const url = getExportUrl(params)
-  window.open(url, '_blank')
+}
+
+const loadContributors = async (word) => {
+  loadingContributors.value = true
+  try {
+    const params = {
+      ...getFilterParams(),
+      limit: 10
+    }
+    const res = await getKeywordContributors(word, params)
+    contributorVideos.value = res.items || []
+  } catch (e) {
+    contributorVideos.value = []
+    console.error('获取贡献视频失败', e)
+  } finally {
+    loadingContributors.value = false
+  }
 }
 
 // ========== 对比 ==========
@@ -643,10 +968,16 @@ const removeCompareWord = (word) => {
 }
 
 const loadCompareData = async () => {
-  if (compareWords.value.length < 2) return
+  if (compareWords.value.length < 2) {
+    compareChart?.dispose()
+    compareChart = null
+    return
+  }
   loadingCompare.value = true
   try {
-    const res = await compareKeywords({ words: compareWords.value, days: 7 })
+    const payload = { words: compareWords.value, days: getTrendDays() }
+    if (filters.category) payload.category = filters.category
+    const res = await compareKeywords(payload)
     await nextTick()
     renderCompareChart(res)
   } catch (e) {
@@ -654,6 +985,14 @@ const loadCompareData = async () => {
   } finally {
     loadingCompare.value = false
   }
+}
+
+const openCompareDialog = () => {
+  compareDialogVisible.value = true
+  if (selectedWord.value && !compareWords.value.includes(selectedWord.value)) {
+    compareWords.value.push(selectedWord.value)
+  }
+  loadCompareData()
 }
 
 const renderCompareChart = (data) => {
@@ -690,6 +1029,7 @@ const goToVideo = (bvid) => {
 // ========== 生命周期 ==========
 onMounted(async () => {
   await loadCategories()
+  await loadAlertSubscription()
   await loadAllData()
   window.addEventListener('resize', handleResize)
 })
@@ -699,6 +1039,7 @@ onUnmounted(() => {
   wordcloudChart?.dispose()
   disposeDetailCharts()
   compareChart?.dispose()
+  if (searchTimer) clearTimeout(searchTimer)
 })
 </script>
 
@@ -858,6 +1199,12 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.ranking-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-title {
@@ -1104,6 +1451,78 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
+/* 实用洞察 */
+.actionable-content {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.action-card {
+  background: var(--bg-white);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.action-list {
+  background: var(--bg-gray-light);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.action-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.action-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 6px;
+  transition: background 0.15s;
+}
+
+.action-item:hover {
+  background: var(--bg-white);
+}
+
+.action-item.rise .action-metric,
+.action-item.opportunity .action-metric {
+  color: #00B578;
+}
+
+.action-item.fall .action-metric,
+.action-item.risk .action-metric {
+  color: #F56C6C;
+}
+
+.action-word {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.action-metric {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.alert-form {
+  margin-bottom: 12px;
+}
+
 /* 对比弹窗 */
 .compare-content {
   padding: 16px 0;
@@ -1123,6 +1542,10 @@ onUnmounted(() => {
 /* 响应式 */
 @media (max-width: 1200px) {
   .main-content {
+    grid-template-columns: 1fr;
+  }
+
+  .action-grid {
     grid-template-columns: 1fr;
   }
 

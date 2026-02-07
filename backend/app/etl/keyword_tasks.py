@@ -147,36 +147,47 @@ class KeywordDailyETL(ETLTask):
     ) -> List[Dict]:
         """从评论提取热词"""
         # 按分区分组
-        category_comments = defaultdict(list)
-        category_sentiments = defaultdict(list)
+        category_comment_items = defaultdict(list)
         category_bvids = defaultdict(set)
 
         for comment in comments:
             category = video_category_map.get(comment.video_id, "未分类")
             if comment.content:
-                category_comments[category].append(comment.content)
-                if comment.sentiment_score is not None:
-                    category_sentiments[category].append(comment.sentiment_score)
+                category_comment_items[category].append({
+                    "content": comment.content,
+                    "sentiment": comment.sentiment_score
+                })
                 bvid = video_bvid_map.get(comment.video_id)
                 if bvid:
                     category_bvids[category].add(bvid)
 
         result = []
-        for category, contents in category_comments.items():
+        for category, items in category_comment_items.items():
+            contents = [item["content"] for item in items]
             keywords = self.nlp.extract_keywords_tfidf(contents, self.top_k)
-            sentiments = category_sentiments.get(category, [])
-            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else None
-            bvids = list(category_bvids.get(category, set()))[:5]
+            video_count = len(category_bvids.get(category, set()))
+            sample_bvids = list(category_bvids.get(category, set()))[:5]
 
             for word, frequency in keywords:
+                # 词级情感分：仅统计包含该词的评论
+                word_sentiments = [
+                    item["sentiment"]
+                    for item in items
+                    if item["sentiment"] is not None and word in item["content"]
+                ]
+                avg_sentiment = (
+                    sum(word_sentiments) / len(word_sentiments)
+                    if word_sentiments else None
+                )
+
                 result.append({
                     "word": word,
                     "source": "comment",
                     "category": category,
                     "frequency": frequency,
-                    "video_count": len(bvids),
+                    "video_count": video_count,
                     "avg_sentiment": avg_sentiment,
-                    "sample_bvids": bvids
+                    "sample_bvids": sample_bvids
                 })
 
         return result
@@ -203,7 +214,8 @@ class KeywordDailyETL(ETLTask):
         result = []
         for category, contents in category_danmakus.items():
             keywords = self.nlp.extract_keywords_tfidf(contents, self.top_k)
-            bvids = list(category_bvids.get(category, set()))[:5]
+            video_count = len(category_bvids.get(category, set()))
+            sample_bvids = list(category_bvids.get(category, set()))[:5]
 
             for word, frequency in keywords:
                 result.append({
@@ -211,9 +223,9 @@ class KeywordDailyETL(ETLTask):
                     "source": "danmaku",
                     "category": category,
                     "frequency": frequency,
-                    "video_count": len(bvids),
+                    "video_count": video_count,
                     "avg_sentiment": None,
-                    "sample_bvids": bvids
+                    "sample_bvids": sample_bvids
                 })
 
         return result

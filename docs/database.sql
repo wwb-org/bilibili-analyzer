@@ -250,6 +250,27 @@ CREATE TABLE `keywords`  (
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
+-- Table structure for keyword_alert_subscriptions
+-- ----------------------------
+DROP TABLE IF EXISTS `keyword_alert_subscriptions`;
+CREATE TABLE `keyword_alert_subscriptions`  (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `enabled` tinyint(1) NULL DEFAULT 1,
+  `min_frequency` int NULL DEFAULT 20,
+  `growth_threshold` float NULL DEFAULT 1,
+  `opportunity_sentiment_threshold` float NULL DEFAULT 0.6,
+  `negative_sentiment_threshold` float NULL DEFAULT 0.4,
+  `interaction_threshold` float NULL DEFAULT 0.05,
+  `top_k` int NULL DEFAULT 10,
+  `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_keyword_alert_subscriptions_user`(`user_id` ASC) USING BTREE,
+  INDEX `ix_keyword_alert_subscriptions_user_id`(`user_id` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for users
 -- ----------------------------
 DROP TABLE IF EXISTS `users`;

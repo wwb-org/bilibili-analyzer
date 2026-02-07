@@ -45,6 +45,22 @@ export const getKeywordRanking = (params) => {
 }
 
 /**
+ * 获取热词异动榜
+ * @param {Object} params - 查询参数
+ */
+export const getKeywordMovers = (params) => {
+  return api.get('/keywords/movers', { params })
+}
+
+/**
+ * 获取热词机会榜/风险榜
+ * @param {Object} params - 查询参数
+ */
+export const getKeywordOpportunityRisk = (params) => {
+  return api.get('/keywords/opportunity-risk', { params })
+}
+
+/**
  * 获取热词详情
  * @param {string} word - 热词
  * @param {Object} params - 查询参数
@@ -53,6 +69,15 @@ export const getKeywordRanking = (params) => {
  */
 export const getKeywordDetail = (word, params = {}) => {
   return api.get(`/keywords/${encodeURIComponent(word)}/detail`, { params })
+}
+
+/**
+ * 获取热词贡献视频
+ * @param {string} word - 热词
+ * @param {Object} params - 查询参数
+ */
+export const getKeywordContributors = (word, params = {}) => {
+  return api.get(`/keywords/${encodeURIComponent(word)}/contributors`, { params })
 }
 
 /**
@@ -77,6 +102,29 @@ export const getCategoryCompare = (params) => {
 }
 
 /**
+ * 获取预警订阅配置
+ */
+export const getKeywordAlertSubscription = () => {
+  return api.get('/keywords/alerts/subscription')
+}
+
+/**
+ * 更新预警订阅配置
+ * @param {Object} data - 配置数据
+ */
+export const updateKeywordAlertSubscription = (data) => {
+  return api.put('/keywords/alerts/subscription', data)
+}
+
+/**
+ * 获取预警命中
+ * @param {Object} params - 查询参数
+ */
+export const getKeywordAlertHits = (params) => {
+  return api.get('/keywords/alerts/hits', { params })
+}
+
+/**
  * 获取热词导出URL
  * @param {Object} params - 查询参数
  * @param {string} params.format - 导出格式 (csv/json)
@@ -87,7 +135,6 @@ export const getCategoryCompare = (params) => {
  * @param {number} params.top_k - 导出数量
  */
 export const getExportUrl = (params) => {
-  const token = localStorage.getItem('token')
   const queryParams = new URLSearchParams()
 
   if (params.format) queryParams.append('format', params.format)

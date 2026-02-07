@@ -2,7 +2,7 @@
 数据模型定义
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, String, Text, Float, DateTime, Enum
+from sqlalchemy import Column, Integer, BigInteger, String, Text, Float, DateTime, Boolean, UniqueConstraint
 from app.core.database import Base
 import enum
 
@@ -100,3 +100,27 @@ class CrawlLog(Base):
     error_msg = Column(Text)
     started_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime)
+
+
+class KeywordAlertSubscription(Base):
+    """热词预警订阅配置"""
+    __tablename__ = "keyword_alert_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    enabled = Column(Boolean, default=True)
+
+    # 触发阈值
+    min_frequency = Column(Integer, default=20)
+    growth_threshold = Column(Float, default=1.0)  # 频次涨幅阈值（1.0=100%）
+    opportunity_sentiment_threshold = Column(Float, default=0.6)
+    negative_sentiment_threshold = Column(Float, default=0.4)
+    interaction_threshold = Column(Float, default=0.05)
+    top_k = Column(Integer, default=10)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', name='uk_keyword_alert_subscriptions_user'),
+    )
