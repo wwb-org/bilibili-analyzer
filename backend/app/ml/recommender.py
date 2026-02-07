@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 import jieba
 
 from app.models import Video
+from app.services.nlp import NLPAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +28,8 @@ VIDEO_INDEX_PATH = BASE_DIR / "ml_models" / "video_index.pkl"
 class VideoRecommender:
     """视频相似推荐器"""
 
-    # 停用词
-    STOP_WORDS = {
-        '的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都',
-        '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会',
-        '着', '没有', '看', '好', '这', '那', '吗', '什么', '他', '她',
-        '们', '这个', '那个', '真的', '可以', '其实', '怎么', '为什么',
-        '啊', '哈哈', '视频', 'bilibili', 'B站', '哔哩哔哩'
-    }
+    # 使用统一停用词
+    STOP_WORDS = NLPAnalyzer.STOP_WORDS
 
     def __init__(self):
         self.vectorizer = None

@@ -251,10 +251,30 @@ def get_default_date_range(days: int = 7):
     return start_date, end_date
 
 
-def resolve_date_range(start_date: Optional[date], end_date: Optional[date]):
-    """解析日期范围，默认最近7天（截至昨天）"""
+def get_latest_data_date(db: Session) -> Optional[date]:
+    """获取DWD热词表中的最新统计日期"""
+    return db.query(func.max(DwdKeywordDaily.stat_date)).scalar()
+
+
+def resolve_date_range(
+    db: Session,
+    start_date: Optional[date],
+    end_date: Optional[date],
+    days: int = 7
+):
+    """解析日期范围：默认最近N天（截至最新数据日）"""
+    if start_date and end_date:
+        return start_date, end_date
+
+    latest_data_date = get_latest_data_date(db)
+    if latest_data_date:
+        end_date = latest_data_date
+        start_date = end_date - timedelta(days=max(days, 1) - 1)
+        return start_date, end_date
+
+    # 无数据时回退到原有默认口径（截至昨天）
     if not start_date or not end_date:
-        return get_default_date_range()
+        return get_default_date_range(days=days)
     return start_date, end_date
 
 
@@ -403,7 +423,7 @@ def build_keyword_insights(
     interaction_threshold: float = 0.05,
 ) -> Dict:
     """构建热词洞察基础数据（异动/机会/风险复用）"""
-    start_date, end_date = resolve_date_range(start_date, end_date)
+    start_date, end_date = resolve_date_range(db, start_date, end_date)
     latest_date = get_latest_stat_date(db, start_date, end_date)
     if not latest_date:
         return {
@@ -552,7 +572,7 @@ def get_keyword_overview(
         category: 分区筛选
         source: 来源筛选 (title/comment/danmaku)
     """
-    start_date, end_date = resolve_date_range(start_date, end_date)
+    start_date, end_date = resolve_date_range(db, start_date, end_date)
 
     latest_date = get_latest_stat_date(db, start_date, end_date)
 
@@ -628,7 +648,7 @@ def get_keyword_wordcloud(
         source: 来源筛选 (title/comment/danmaku)
         top_k: 返回数量
     """
-    start_date, end_date = resolve_date_range(start_date, end_date)
+    start_date, end_date = resolve_date_range(db, start_date, end_date)
 
     latest_date = get_latest_stat_date(db, start_date, end_date)
 
@@ -696,7 +716,7 @@ def get_keyword_ranking(
         page: 页码
         page_size: 每页数量
     """
-    start_date, end_date = resolve_date_range(start_date, end_date)
+    start_date, end_date = resolve_date_range(db, start_date, end_date)
 
     latest_date = get_latest_stat_date(db, start_date, end_date)
 
@@ -908,7 +928,7 @@ def get_keyword_contributors(
     """
     获取热词贡献视频（样例估算）
     """
-    start_date, end_date = resolve_date_range(start_date, end_date)
+    start_date, end_date = resolve_date_range(db, start_date, end_date)
     latest_date = get_latest_stat_date(db, start_date, end_date)
     if not latest_date:
         raise HTTPException(status_code=404, detail="无可用热词数据")
@@ -983,7 +1003,8 @@ def get_keyword_detail(
         days: 趋势天数
         category: 分区筛选
     """
-    end_date = date.today() - timedelta(days=1)
+    latest_data_date = get_latest_data_date(db)
+    end_date = latest_data_date or (date.today() - timedelta(days=1))
     start_date = end_date - timedelta(days=days - 1)
 
     latest_date_query = db.query(func.max(DwdKeywordDaily.stat_date)).filter(
@@ -1221,7 +1242,8 @@ def compare_keywords(
     if len(request.words) > 5:
         raise HTTPException(status_code=400, detail="最多支持5个热词对比")
 
-    end_date = date.today() - timedelta(days=1)
+    latest_data_date = get_latest_data_date(db)
+    end_date = latest_data_date or (date.today() - timedelta(days=1))
     start_date = end_date - timedelta(days=request.days - 1)
 
     query = db.query(
@@ -1268,11 +1290,11 @@ def compare_category_keywords(
     分区热词对比
 
     Args:
-        stat_date: 统计日期，默认昨天
+        stat_date: 统计日期，默认最新数据日
         top_k: 每分区返回热词数
     """
     if not stat_date:
-        stat_date = date.today() - timedelta(days=1)
+        stat_date = get_latest_data_date(db) or (date.today() - timedelta(days=1))
 
     # 从DWD层按分区聚合
     results = db.query(
@@ -1337,7 +1359,7 @@ def export_keywords(
         source: 来源筛选
         top_k: 导出数量
     """
-    start_date, end_date = resolve_date_range(start_date, end_date)
+    start_date, end_date = resolve_date_range(db, start_date, end_date)
     latest_date = get_latest_stat_date(db, start_date, end_date)
 
     if not latest_date:
