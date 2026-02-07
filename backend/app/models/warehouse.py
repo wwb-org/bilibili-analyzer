@@ -4,12 +4,14 @@
 DWD层（明细数据层）：
 - DwdVideoSnapshot: 视频每日快照
 - DwdCommentDaily: 评论每日增量
+- DwdKeywordDaily: 热词每日明细
 
 DWS层（汇总数据层）：
 - DwsStatsDaily: 每日全局统计
 - DwsCategoryDaily: 每日分区统计
 - DwsSentimentDaily: 每日情感统计
 - DwsVideoTrend: 视频热度趋势
+- DwsKeywordStats: 热词聚合统计
 """
 from datetime import datetime
 from sqlalchemy import Column, Integer, BigInteger, String, Text, Float, DateTime, Date, UniqueConstraint, Index
@@ -260,4 +262,86 @@ class DwsVideoTrend(Base):
     __table_args__ = (
         UniqueConstraint('video_id', 'trend_date', name='uk_video_trend_date'),
         Index('idx_heat_score_date', 'trend_date', 'heat_score'),
+    )
+
+
+# ==================== DWD层 - 热词分析 ====================
+
+class DwdKeywordDaily(Base):
+    """
+    热词每日明细表
+
+    用途：记录每日热词的详细信息，区分不同来源
+    数据来源：videos.title, comments.content, danmakus.content
+    更新频率：每日
+    """
+    __tablename__ = "dwd_keyword_daily"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+
+    # 统计日期
+    stat_date = Column(Date, nullable=False, index=True)
+
+    # 热词信息
+    word = Column(String(50), nullable=False, index=True)
+    source = Column(String(20), nullable=False)  # title, comment, danmaku
+    category = Column(String(50), index=True)  # 视频分区（可选）
+
+    # 统计指标
+    frequency = Column(Integer, default=0)  # 当日频次
+    video_count = Column(Integer, default=0)  # 关联视频数
+    avg_sentiment = Column(Float)  # 平均情感分（评论来源时有效）
+
+    # 示例视频（JSON数组，最多5个BVID）
+    sample_bvids = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('word', 'stat_date', 'source', 'category', name='uk_keyword_daily'),
+        Index('idx_keyword_date_freq', 'stat_date', 'frequency'),
+        Index('idx_keyword_source', 'stat_date', 'source'),
+    )
+
+
+class DwsKeywordStats(Base):
+    """
+    热词聚合统计表
+
+    用途：预聚合热词统计，优化热词分析查询
+    数据来源：dwd_keyword_daily
+    更新频率：每日
+    """
+    __tablename__ = "dws_keyword_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # 统计日期
+    stat_date = Column(Date, nullable=False, index=True)
+
+    # 热词
+    word = Column(String(50), nullable=False, index=True)
+
+    # 各来源频次
+    title_frequency = Column(Integer, default=0)  # 标题来源频次
+    comment_frequency = Column(Integer, default=0)  # 评论来源频次
+    danmaku_frequency = Column(Integer, default=0)  # 弹幕来源频次
+    total_frequency = Column(Integer, default=0)  # 总频次
+
+    # 聚合统计
+    video_count = Column(Integer, default=0)  # 关联视频总数
+    category_distribution = Column(Text)  # 分区分布（JSON格式）
+    avg_sentiment = Column(Float)  # 平均情感分
+
+    # 趋势指标
+    frequency_trend = Column(Float, default=0)  # 7日频次变化率
+    rank_change = Column(Integer, default=0)  # 排名变化（正数上升，负数下降）
+    heat_score = Column(Float, default=0)  # 综合热度分
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('word', 'stat_date', name='uk_keyword_stats'),
+        Index('idx_keyword_stats_freq', 'stat_date', 'total_frequency'),
+        Index('idx_keyword_stats_heat', 'stat_date', 'heat_score'),
     )

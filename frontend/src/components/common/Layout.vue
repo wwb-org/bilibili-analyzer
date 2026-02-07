@@ -41,7 +41,7 @@
           
           <el-menu-item index="/prediction">
             <el-icon><TrendCharts /></el-icon>
-            <span>趋势预测</span>
+            <span>智能预测</span>
           </el-menu-item>
           
           <el-menu-item index="/admin" v-if="userStore.user?.role === 'admin'">
