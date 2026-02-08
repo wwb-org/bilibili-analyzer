@@ -60,6 +60,140 @@
       </div>
     </div>
 
+    <!-- 数据概览模块 -->
+    <div class="panel" v-loading="dataOverviewLoading">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h3 class="panel-title">数据概览</h3>
+          <span class="panel-subtitle">ODS / DWD / DWS 三层数据按日期统计</span>
+        </div>
+        <el-button text type="primary" @click="fetchDataOverview">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+      </div>
+      <div class="panel-body" v-if="dataOverview">
+        <!-- 总量卡片 -->
+        <div class="overview-cards">
+          <div class="overview-card">
+            <div class="overview-value">{{ formatNum(dataOverview.ods.videos) }}</div>
+            <div class="overview-label">视频总数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">{{ formatNum(dataOverview.ods.comments) }}</div>
+            <div class="overview-label">评论总数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">{{ formatNum(dataOverview.ods.danmakus) }}</div>
+            <div class="overview-label">弹幕总数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">{{ dataOverview.daily_details?.length || 0 }}</div>
+            <div class="overview-label">数据天数</div>
+          </div>
+        </div>
+        <div class="overview-date-range" v-if="dataOverview.ods.earliest_date">
+          采集范围: {{ dataOverview.ods.earliest_date }} ~ {{ dataOverview.ods.latest_date }}
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="overview-actions">
+          <el-button size="small" type="warning" @click="handleBatchFillMissing">
+            一键补全未处理日期
+          </el-button>
+        </div>
+
+        <!-- 日期明细表格 -->
+        <el-table
+          :data="dataOverview.daily_details"
+          stripe
+          size="small"
+          max-height="480"
+          style="width: 100%"
+          :row-class-name="({ row }) => row.etl_status === 'missing' && row.ods_videos > 0 ? 'row-missing' : ''"
+        >
+          <el-table-column prop="date" label="日期" width="110" fixed />
+          <el-table-column label="ODS（原始数据）" align="center">
+            <el-table-column prop="ods_videos" label="视频" width="70" align="center" />
+            <el-table-column prop="ods_comments" label="评论" width="70" align="center" />
+            <el-table-column prop="ods_danmakus" label="弹幕" width="70" align="center" />
+          </el-table-column>
+          <el-table-column label="DWD（明细层）" align="center">
+            <el-table-column prop="dwd_video_snapshot" label="快照" width="70" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'zero-val': !row.dwd_video_snapshot }">{{ row.dwd_video_snapshot || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="dwd_comment_daily" label="评论" width="70" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'zero-val': !row.dwd_comment_daily }">{{ row.dwd_comment_daily || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="dwd_keyword_daily" label="热词" width="70" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'zero-val': !row.dwd_keyword_daily }">{{ row.dwd_keyword_daily || '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table-column>
+          <el-table-column label="DWS（汇总层）" align="center">
+            <el-table-column label="统计" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_stats" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="分区" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_category" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="情感" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_sentiment" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="趋势" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_video_trend" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="热词" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_keyword_stats" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+          </el-table-column>
+          <el-table-column label="ETL" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="getEtlStatusType(row.etl_status)" size="small">
+                {{ getEtlStatusText(row.etl_status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.etl_status !== 'complete'"
+                type="primary"
+                link
+                size="small"
+                :loading="etlRunningDate === row.date"
+                @click="handleRunETLForDate(row.date)"
+              >
+                执行ETL
+              </el-button>
+              <span v-else class="done-text">已完成</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <el-empty v-else-if="!dataOverviewLoading" description="暂无数据" :image-size="60" />
+    </div>
+
     <!-- 数据采集模块 -->
     <div class="panel">
       <div class="panel-header">
@@ -579,7 +713,8 @@ import {
   getServicesStatus,
   getBilibiliStatus,
   verifyBilibiliCookie,
-  updateBilibiliCookie
+  updateBilibiliCookie,
+  getDataOverview
 } from '@/api/admin'
 import {
   getModelInfo,
@@ -647,6 +782,11 @@ const trainPredictorLoading = ref(false)
 const trainRecommenderLoading = ref(false)
 const trainAllLoading = ref(false)
 const lastTrainResult = ref(null)
+
+// 数据概览
+const dataOverview = ref(null)
+const dataOverviewLoading = ref(false)
+const etlRunningDate = ref(null)
 
 // ========== 方法 ==========
 const fetchServicesStatus = async () => {
@@ -1015,6 +1155,80 @@ const handleTrainAll = async () => {
   }
 }
 
+// ========== 数据概览 ==========
+const fetchDataOverview = async () => {
+  dataOverviewLoading.value = true
+  try {
+    dataOverview.value = await getDataOverview()
+  } catch (e) {
+    console.error('获取数据概览失败', e)
+  } finally {
+    dataOverviewLoading.value = false
+  }
+}
+
+const handleRunETLForDate = async (dateStr) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要对 ${dateStr} 执行 ETL 吗？`,
+      '确认执行',
+      { type: 'info' }
+    )
+    etlRunningDate.value = dateStr
+    await runETL(dateStr)
+    ElMessage.success(`${dateStr} 的 ETL 任务已提交`)
+    setTimeout(fetchDataOverview, 5000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('执行失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    etlRunningDate.value = null
+  }
+}
+
+const handleBatchFillMissing = async () => {
+  if (!dataOverview.value?.daily_details) return
+  const missing = dataOverview.value.daily_details.filter(
+    d => d.etl_status !== 'complete' && (d.ods_videos > 0 || d.ods_comments > 0 || d.ods_danmakus > 0)
+  )
+  if (missing.length === 0) {
+    ElMessage.info('没有需要补全的日期')
+    return
+  }
+  const dates = missing.map(d => d.date).sort()
+  try {
+    await ElMessageBox.confirm(
+      `将对 ${dates.length} 个日期执行 ETL 回填（${dates[0]} ~ ${dates[dates.length - 1]}）`,
+      '确认批量补全',
+      { type: 'info' }
+    )
+    await backfillETL(dates[0], dates[dates.length - 1])
+    ElMessage.success('回填任务已提交')
+    setTimeout(fetchDataOverview, 5000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('回填失败: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+}
+
+const formatNum = (num) => {
+  if (!num) return '0'
+  if (num >= 10000) return (num / 10000).toFixed(1) + '万'
+  return num.toLocaleString()
+}
+
+const getEtlStatusType = (status) => {
+  const map = { complete: 'success', partial: 'warning', missing: 'danger' }
+  return map[status] || 'info'
+}
+
+const getEtlStatusText = (status) => {
+  const map = { complete: '完整', partial: '部分', missing: '未处理' }
+  return map[status] || status
+}
+
 // ========== 工具函数 ==========
 const formatTime = (time) => {
   if (!time) return '-'
@@ -1044,6 +1258,7 @@ onMounted(() => {
   fetchCrawlLogs()
   fetchUsers()
   fetchModelInfo()
+  fetchDataOverview()
 })
 </script>
 
@@ -1463,5 +1678,59 @@ onMounted(() => {
     flex-direction: column;
     text-align: center;
   }
+
+  .overview-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 数据概览 */
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.overview-card {
+  background: var(--bg-gray-light, #f5f7fa);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.overview-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary, #303133);
+}
+
+.overview-label {
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+  margin-top: 4px;
+}
+
+.overview-date-range {
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+  margin-bottom: 12px;
+}
+
+.overview-actions {
+  margin-bottom: 12px;
+}
+
+.zero-val {
+  color: #c0c4cc;
+}
+
+.done-text {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+
+:deep(.row-missing) {
+  background-color: #fef0f0 !important;
 }
 </style>

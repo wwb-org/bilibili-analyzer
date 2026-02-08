@@ -122,3 +122,12 @@ export const verifyBilibiliCookie = (cookie) => {
 export const updateBilibiliCookie = (cookie) => {
   return api.post('/admin/bilibili/cookie', { cookie })
 }
+
+// ==================== 数据概览 ====================
+
+/**
+ * 获取数据概览（ODS/DWD/DWS 三层按日期统计）
+ */
+export const getDataOverview = () => {
+  return api.get('/admin/data-overview')
+}

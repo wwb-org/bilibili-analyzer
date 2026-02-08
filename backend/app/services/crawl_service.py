@@ -2,13 +2,16 @@
 采集服务层
 封装完整的采集业务逻辑，集成情感分析和日志记录
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
+import logging
 
 from app.services.crawler import BilibiliCrawler
 from app.models.models import Video, Comment, Danmaku, CrawlLog
 from app.core.database import SessionLocal
+
+logger = logging.getLogger(__name__)
 
 
 class CrawlService:
@@ -18,6 +21,20 @@ class CrawlService:
         # 使用动态Cookie初始化爬虫（支持运行时更新）
         from app.services.bilibili_auth import get_current_cookie
         self.crawler = BilibiliCrawler(cookie=get_current_cookie())
+
+    def _run_etl_after_crawl(self):
+        """采集完成后自动执行当天的ETL"""
+        try:
+            from app.etl.scheduler import etl_scheduler
+            logger.info("[采集后ETL] 开始执行当天ETL...")
+            print("\n[采集后ETL] 自动执行当天ETL任务...")
+            results = etl_scheduler.run_daily_etl(stat_date=date.today())
+            success_count = sum(1 for r in results if r.get('status') == 'success')
+            logger.info(f"[采集后ETL] 完成，{success_count}/{len(results)} 个任务成功")
+            print(f"[采集后ETL] 完成，{success_count}/{len(results)} 个任务成功")
+        except Exception as e:
+            logger.error(f"[采集后ETL] 执行失败: {e}")
+            print(f"[采集后ETL] 执行失败: {e}")
 
     def crawl_popular_videos(
         self,
@@ -145,6 +162,10 @@ class CrawlService:
             db.commit()
 
             print(f"\n[采集任务] 完成！视频: {stats['videos_saved']}, 评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
+
+            # 采集成功后自动执行ETL
+            self._run_etl_after_crawl()
+
             return stats
 
         except Exception as e:
@@ -442,6 +463,10 @@ class CrawlService:
 
             print(f"\n[批量采集] 完成！成功: {stats['videos_saved']}/{stats['total']}, "
                   f"评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
+
+            # 采集成功后自动执行ETL
+            self._run_etl_after_crawl()
+
             return stats
 
         except Exception as e:

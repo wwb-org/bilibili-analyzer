@@ -102,26 +102,11 @@ export const getCategoryCompare = (params) => {
 }
 
 /**
- * 获取预警订阅配置
- */
-export const getKeywordAlertSubscription = () => {
-  return api.get('/keywords/alerts/subscription')
-}
-
-/**
- * 更新预警订阅配置
- * @param {Object} data - 配置数据
- */
-export const updateKeywordAlertSubscription = (data) => {
-  return api.put('/keywords/alerts/subscription', data)
-}
-
-/**
- * 获取预警命中
+ * 获取内容选题建议
  * @param {Object} params - 查询参数
  */
-export const getKeywordAlertHits = (params) => {
-  return api.get('/keywords/alerts/hits', { params })
+export const getContentSuggestions = (params) => {
+  return api.get('/keywords/content-suggestions', { params })
 }
 
 /**
@@ -156,6 +141,6 @@ export const getExportUrl = (params) => {
 export const exportKeywords = (params) => {
   return api.get('/keywords/export', {
     params,
-    responseType: params.format === 'csv' ? 'blob' : 'json'
+    responseType: 'blob'
   })
 }

@@ -6,9 +6,10 @@
 - KeywordStatsETL: 热词聚合统计ETL（DWS层）
 """
 import json
+import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from sqlalchemy import func, and_
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import Session
@@ -17,6 +18,26 @@ from app.etl.base import ETLTask
 from app.models.models import Video, Comment, Danmaku
 from app.models.warehouse import DwdKeywordDaily, DwsKeywordStats
 from app.services.nlp import NLPAnalyzer
+
+logger = logging.getLogger(__name__)
+
+UPSERT_CHUNK_SIZE = 1000
+MAX_DWD_WORD_LENGTH = DwdKeywordDaily.__table__.c.word.type.length or 50
+MAX_DWS_WORD_LENGTH = DwsKeywordStats.__table__.c.word.type.length or 50
+
+
+def _chunk_rows(rows: List[Dict[str, Any]], chunk_size: int = UPSERT_CHUNK_SIZE):
+    for i in range(0, len(rows), chunk_size):
+        yield rows[i:i + chunk_size]
+
+
+def _normalize_word(word: Any, max_len: int) -> Optional[str]:
+    text = str(word or "").strip()
+    if not text:
+        return None
+    if len(text) > max_len:
+        return None
+    return text
 
 
 class KeywordDailyETL(ETLTask):
@@ -239,8 +260,13 @@ class KeywordDailyETL(ETLTask):
 
         # 去重合并，避免同一 (word, source, category) 重复写入导致唯一键冲突
         merged: Dict[tuple, Dict[str, Any]] = {}
+        skipped_invalid_words = 0
         for item in data:
-            key = (item["word"], item["source"], item["category"])
+            normalized_word = _normalize_word(item.get("word"), MAX_DWD_WORD_LENGTH)
+            if normalized_word is None:
+                skipped_invalid_words += 1
+                continue
+            key = (normalized_word, item["source"], item["category"])
             if key not in merged:
                 merged[key] = {
                     "frequency": item["frequency"],
@@ -280,15 +306,23 @@ class KeywordDailyETL(ETLTask):
                 "created_at": now,
             })
 
-        stmt = mysql_insert(DwdKeywordDaily.__table__).values(rows)
-        stmt = stmt.on_duplicate_key_update(
-            frequency=stmt.inserted.frequency,
-            video_count=stmt.inserted.video_count,
-            avg_sentiment=stmt.inserted.avg_sentiment,
-            sample_bvids=stmt.inserted.sample_bvids,
-            created_at=stmt.inserted.created_at,
-        )
-        self.db.execute(stmt)
+        if skipped_invalid_words > 0:
+            logger.warning(
+                "[KeywordDailyETL] 过滤超长/空热词 %s 个（最大长度=%s）",
+                skipped_invalid_words,
+                MAX_DWD_WORD_LENGTH,
+            )
+
+        for chunk in _chunk_rows(rows):
+            stmt = mysql_insert(DwdKeywordDaily.__table__).values(chunk)
+            stmt = stmt.on_duplicate_key_update(
+                frequency=stmt.inserted.frequency,
+                video_count=stmt.inserted.video_count,
+                avg_sentiment=stmt.inserted.avg_sentiment,
+                sample_bvids=stmt.inserted.sample_bvids,
+                created_at=stmt.inserted.created_at,
+            )
+            self.db.execute(stmt)
 
         return len(rows)
 
@@ -420,19 +454,24 @@ class KeywordStatsETL(ETLTask):
 
         rows = []
         now = datetime.utcnow()
+        skipped_invalid_words = 0
         for i, item in enumerate(data):
+            normalized_word = _normalize_word(item.get("word"), MAX_DWS_WORD_LENGTH)
+            if normalized_word is None:
+                skipped_invalid_words += 1
+                continue
             current_rank = i + 1
-            prev_rank = prev_rankings.get(item["word"], current_rank)
+            prev_rank = prev_rankings.get(normalized_word, current_rank)
             rank_change = prev_rank - current_rank  # 正数表示上升
 
             # 计算频次趋势
-            prev_freq = week_ago_stats.get(item["word"], 0)
+            prev_freq = week_ago_stats.get(normalized_word, 0)
             frequency_trend = 0
             if prev_freq > 0:
                 frequency_trend = (item["total_frequency"] - prev_freq) / prev_freq
             rows.append({
                 "stat_date": stat_date,
-                "word": item["word"],
+                "word": normalized_word,
                 "title_frequency": item["title_frequency"],
                 "comment_frequency": item["comment_frequency"],
                 "danmaku_frequency": item["danmaku_frequency"],
@@ -448,21 +487,29 @@ class KeywordStatsETL(ETLTask):
                 "created_at": now,
             })
 
-        stmt = mysql_insert(DwsKeywordStats.__table__).values(rows)
-        stmt = stmt.on_duplicate_key_update(
-            title_frequency=stmt.inserted.title_frequency,
-            comment_frequency=stmt.inserted.comment_frequency,
-            danmaku_frequency=stmt.inserted.danmaku_frequency,
-            total_frequency=stmt.inserted.total_frequency,
-            video_count=stmt.inserted.video_count,
-            category_distribution=stmt.inserted.category_distribution,
-            avg_sentiment=stmt.inserted.avg_sentiment,
-            frequency_trend=stmt.inserted.frequency_trend,
-            rank_change=stmt.inserted.rank_change,
-            heat_score=stmt.inserted.heat_score,
-            created_at=stmt.inserted.created_at,
-        )
-        self.db.execute(stmt)
+        if skipped_invalid_words > 0:
+            logger.warning(
+                "[KeywordStatsETL] 过滤超长/空热词 %s 个（最大长度=%s）",
+                skipped_invalid_words,
+                MAX_DWS_WORD_LENGTH,
+            )
+
+        for chunk in _chunk_rows(rows):
+            stmt = mysql_insert(DwsKeywordStats.__table__).values(chunk)
+            stmt = stmt.on_duplicate_key_update(
+                title_frequency=stmt.inserted.title_frequency,
+                comment_frequency=stmt.inserted.comment_frequency,
+                danmaku_frequency=stmt.inserted.danmaku_frequency,
+                total_frequency=stmt.inserted.total_frequency,
+                video_count=stmt.inserted.video_count,
+                category_distribution=stmt.inserted.category_distribution,
+                avg_sentiment=stmt.inserted.avg_sentiment,
+                frequency_trend=stmt.inserted.frequency_trend,
+                rank_change=stmt.inserted.rank_change,
+                heat_score=stmt.inserted.heat_score,
+                created_at=stmt.inserted.created_at,
+            )
+            self.db.execute(stmt)
 
         return len(rows)
 

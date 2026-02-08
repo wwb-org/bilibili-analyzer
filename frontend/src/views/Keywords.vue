@@ -62,24 +62,48 @@
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-input
+          <el-autocomplete
             v-model="searchKeyword"
-            placeholder="搜索热词"
+            :fetch-suggestions="fetchSearchSuggestions"
+            placeholder="搜索热词（全局）"
             clearable
-            @input="handleSearchDebounce"
+            :trigger-on-focus="false"
+            :debounce="300"
+            @select="handleSearchSelect"
+            @clear="handleSearchDebounce"
           >
             <template #prefix>
               <el-icon><Search /></el-icon>
             </template>
-          </el-input>
+            <template #default="{ item }">
+              <div class="search-suggestion-item">
+                <span class="suggestion-word">{{ item.word }}</span>
+                <span class="suggestion-freq">{{ formatNumber(item.total_frequency) }}</span>
+                <span class="suggestion-trend" :class="item.trend">
+                  <el-icon v-if="item.trend === 'up'" :size="12"><Top /></el-icon>
+                  <el-icon v-else-if="item.trend === 'down'" :size="12"><Bottom /></el-icon>
+                  <el-icon v-else :size="12"><Minus /></el-icon>
+                </span>
+              </div>
+            </template>
+          </el-autocomplete>
         </el-form-item>
       </el-form>
     </div>
 
+    <!-- 数据新鲜度 -->
+    <div class="data-freshness" v-if="overviewStats.stat_date">
+      <span class="freshness-text">
+        数据截至: {{ overviewStats.stat_date }}
+        <span v-if="overviewStats.data_days"> | 已积累 {{ overviewStats.data_days }} 天数据</span>
+      </span>
+      <span v-if="isDataStale" class="stale-warning">
+        数据已超过3天未更新，建议执行新的采集任务
+      </span>
+    </div>
+
     <!-- 主内容区 -->
     <div class="main-content">
-      <!-- 左侧：热词概览区 -->
-      <div class="left-panel">
         <!-- 统计卡片 -->
         <div class="stats-grid" v-loading="loadingOverview">
           <div class="stat-card">
@@ -122,6 +146,7 @@
           </div>
         </div>
 
+        <div class="content-row">
         <!-- 词云区域 -->
         <div class="wordcloud-section">
           <div class="section-header">
@@ -174,110 +199,157 @@
             />
           </div>
         </div>
-      </div>
-
-      <!-- 右侧：热词详情区 -->
-      <div class="right-panel">
-        <!-- 未选择状态 -->
-        <div v-if="!selectedWord && !loadingDetail" class="empty-state">
-          <el-empty description="点击左侧热词查看详情" :image-size="150" />
         </div>
+    </div>
 
-        <!-- 加载中状态 -->
-        <div v-else-if="loadingDetail" class="loading-state">
-          <el-skeleton :rows="10" animated />
+    <!-- 分区全景 -->
+    <div class="category-landscape" v-if="categoryCompareData.length > 0">
+      <div class="action-card">
+        <div class="section-header">
+          <span class="section-title">分区全景</span>
+          <span class="section-tip">查看各分区热词格局，发现跨区机会</span>
         </div>
-
-        <!-- 详情内容 -->
-        <div v-else-if="keywordDetail" class="detail-content">
-          <!-- 热词信息卡片 -->
-          <div class="keyword-info-card">
-            <div class="keyword-word">{{ keywordDetail.word }}</div>
-            <div class="keyword-stats">
-              <div class="stat-item">
-                <span class="label">当前排名</span>
-                <span class="value rank">第 {{ keywordDetail.current_rank }} 名</span>
-              </div>
-              <div class="stat-item">
-                <span class="label">总频次</span>
-                <span class="value">{{ formatNumber(keywordDetail.total_frequency) }}</span>
-              </div>
-              <div class="stat-item" v-if="keywordDetail.avg_sentiment">
-                <span class="label">情感均分</span>
-                <span class="value" :class="getSentimentClass(keywordDetail.avg_sentiment)">
-                  {{ keywordDetail.avg_sentiment.toFixed(2) }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 来源分布饼图 -->
-          <div class="chart-card">
-            <div class="chart-title">来源分布</div>
-            <div ref="sourcePieRef" class="chart-container"></div>
-          </div>
-
-          <!-- 频次趋势折线图 -->
-          <div class="chart-card">
-            <div class="chart-title">频次趋势</div>
-            <div ref="trendLineRef" class="chart-container"></div>
-          </div>
-
-          <!-- 分区分布 -->
-          <div class="chart-card" v-if="keywordDetail.category_distribution?.length > 0">
-            <div class="chart-title">分区分布</div>
-            <div ref="categoryBarRef" class="chart-container"></div>
-          </div>
-
-          <!-- 关联视频 -->
-          <div class="related-videos" v-if="keywordDetail.related_videos?.length > 0">
-            <div class="section-title">关联视频</div>
-            <div class="video-list">
-              <div
-                v-for="video in keywordDetail.related_videos"
-                :key="video.bvid"
-                class="video-item"
-                @click="goToVideo(video.bvid)"
-              >
-                <img :src="video.cover_url" class="video-cover" alt="cover" />
-                <div class="video-info">
-                  <div class="video-title" :title="video.title">{{ video.title }}</div>
-                  <div class="video-meta">{{ formatNumber(video.play_count) }} 播放</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 贡献视频 -->
-          <div class="chart-card">
-            <div class="chart-title">贡献视频 TOP10（样例估算）</div>
-            <el-table
-              :data="contributorVideos"
-              size="small"
-              stripe
-              max-height="320"
-              v-loading="loadingContributors"
-              empty-text="暂无样例贡献视频"
-            >
-              <el-table-column prop="title" label="视频" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="estimated_contribution" label="贡献值" width="90">
-                <template #default="{ row }">{{ row.estimated_contribution.toFixed(1) }}</template>
-              </el-table-column>
-              <el-table-column prop="play_increment" label="播放增量" width="90" />
-              <el-table-column prop="comment_increment" label="评论增量" width="90" />
-              <el-table-column label="互动率" width="90">
-                <template #default="{ row }">{{ (row.interaction_rate * 100).toFixed(1) }}%</template>
-              </el-table-column>
-              <el-table-column label="操作" width="80">
-                <template #default="{ row }">
-                  <el-button type="primary" link @click="goToVideo(row.bvid)">查看</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
+        <div class="category-tabs">
+          <span
+            v-for="cat in categoryCompareData"
+            :key="cat.category"
+            class="category-tab"
+            :class="{ active: selectedCategory === cat.category }"
+            @click="handleCategorySelect(cat.category)"
+          >
+            {{ cat.category }}
+          </span>
         </div>
+        <div class="category-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#00A1D6"></span>普通热词</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#409EFF"></span>跨区热词</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#E6A23C"></span>独有热词</span>
+        </div>
+        <div ref="categoryBarCompareRef" class="category-bar-chart" v-loading="loadingCategoryCompare"></div>
       </div>
     </div>
+
+    <!-- 热词详情抽屉 -->
+    <el-drawer
+      v-model="detailDrawerVisible"
+      title="热词详情"
+      size="520px"
+      :destroy-on-close="false"
+      @opened="onDrawerOpened"
+      @close="onDrawerClose"
+    >
+      <!-- 加载中状态 -->
+      <div v-if="loadingDetail" class="drawer-loading">
+        <el-skeleton :rows="10" animated />
+      </div>
+
+      <!-- 详情内容 -->
+      <div v-else-if="keywordDetail" class="detail-content">
+        <!-- 热词信息卡片 -->
+        <div class="keyword-info-card">
+          <div class="keyword-word">{{ keywordDetail.word }}</div>
+          <div class="keyword-stats">
+            <div class="stat-item">
+              <span class="label">当前排名</span>
+              <span class="value rank">第 {{ keywordDetail.current_rank }} 名</span>
+            </div>
+            <div class="stat-item">
+              <span class="label">总频次</span>
+              <span class="value">{{ formatNumber(keywordDetail.total_frequency) }}</span>
+            </div>
+            <div class="stat-item" v-if="keywordDetail.avg_sentiment">
+              <span class="label">情感均分</span>
+              <span class="value" :class="getSentimentClass(keywordDetail.avg_sentiment)">
+                {{ keywordDetail.avg_sentiment.toFixed(2) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 来源分布饼图 -->
+        <div class="chart-card">
+          <div class="chart-title">来源分布</div>
+          <div ref="sourcePieRef" class="chart-container"></div>
+        </div>
+
+        <!-- 频次趋势折线图 -->
+        <div class="chart-card">
+          <div class="chart-title">频次趋势</div>
+          <div ref="trendLineRef" class="chart-container"></div>
+        </div>
+
+        <!-- 分区分布 -->
+        <div class="chart-card" v-if="keywordDetail.category_distribution?.length > 0">
+          <div class="chart-title">分区分布</div>
+          <div ref="categoryBarRef" class="chart-container"></div>
+        </div>
+
+        <!-- 关联热词 -->
+        <div class="related-keywords" v-if="keywordDetail.related_keywords?.length > 0">
+          <div class="section-title">关联热词</div>
+          <div class="section-tip" style="margin-bottom:8px;font-size:12px;color:var(--text-secondary)">基于视频共现分析</div>
+          <div class="keyword-tags">
+            <el-tag
+              v-for="rk in keywordDetail.related_keywords"
+              :key="rk.word"
+              class="related-tag"
+              effect="plain"
+              @click="selectKeyword(rk.word)"
+              style="cursor:pointer;margin:4px"
+            >
+              {{ rk.word }} ({{ rk.co_occurrence }})
+            </el-tag>
+          </div>
+        </div>
+
+        <!-- 关联视频 -->
+        <div class="related-videos" v-if="keywordDetail.related_videos?.length > 0">
+          <div class="section-title">关联视频</div>
+          <div class="video-list">
+            <div
+              v-for="video in keywordDetail.related_videos"
+              :key="video.bvid"
+              class="video-item"
+              @click="goToVideo(video.bvid)"
+            >
+              <img :src="video.cover_url" class="video-cover" alt="cover" />
+              <div class="video-info">
+                <div class="video-title" :title="video.title">{{ video.title }}</div>
+                <div class="video-meta">{{ formatNumber(video.play_count) }} 播放</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 贡献视频 -->
+        <div class="chart-card">
+          <div class="chart-title">贡献视频 TOP10（样例估算）</div>
+          <el-table
+            :data="contributorVideos"
+            size="small"
+            stripe
+            max-height="320"
+            v-loading="loadingContributors"
+            empty-text="暂无样例贡献视频"
+          >
+            <el-table-column prop="title" label="视频" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="estimated_contribution" label="贡献值" width="90">
+              <template #default="{ row }">{{ row.estimated_contribution.toFixed(1) }}</template>
+            </el-table-column>
+            <el-table-column prop="play_increment" label="播放增量" width="90" />
+            <el-table-column prop="comment_increment" label="评论增量" width="90" />
+            <el-table-column label="互动率" width="90">
+              <template #default="{ row }">{{ (row.interaction_rate * 100).toFixed(1) }}%</template>
+            </el-table-column>
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }">
+                <el-button type="primary" link @click="goToVideo(row.bvid)">查看</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+    </el-drawer>
 
     <!-- 实用洞察 -->
     <div class="actionable-content">
@@ -285,6 +357,9 @@
         <div class="section-header">
           <span class="section-title">异动榜</span>
           <span class="section-tip">基于当前周期与上一统计日对比</span>
+        </div>
+        <div v-if="!loadingMovers && !moversData.previous_date" class="data-hint">
+          数据积累不足2天，异动分析需要至少2个统计日的数据才能生效，请先完成多次采集与ETL
         </div>
         <div class="action-grid" v-loading="loadingMovers">
           <div class="action-list">
@@ -296,7 +371,8 @@
               @click="selectKeyword(item.word)"
             >
               <span class="action-word">{{ item.word }}</span>
-              <span class="action-metric">+{{ (item.change_rate * 100).toFixed(0) }}%</span>
+              <span v-if="item.is_new" class="action-tag new-tag">新</span>
+              <span class="action-metric">{{ formatSignedDelta(item.change_abs) }}（{{ formatRatePercent(item.change_rate) }}）</span>
             </div>
             <el-empty v-if="!loadingMovers && moversData.rising.length === 0" description="暂无爆发词" :image-size="48" />
           </div>
@@ -309,7 +385,8 @@
               @click="selectKeyword(item.word)"
             >
               <span class="action-word">{{ item.word }}</span>
-              <span class="action-metric">{{ (item.change_rate * 100).toFixed(0) }}%</span>
+              <span v-if="item.is_new" class="action-tag new-tag">新</span>
+              <span class="action-metric">{{ formatSignedDelta(item.change_abs) }}（{{ formatRatePercent(item.change_rate) }}）</span>
             </div>
             <el-empty v-if="!loadingMovers && moversData.falling.length === 0" description="暂无下滑词" :image-size="48" />
           </div>
@@ -351,54 +428,44 @@
         </div>
       </div>
 
-      <div class="action-card">
+      <!-- 选题建议 -->
+      <div class="action-card" v-loading="loadingSuggestions">
         <div class="section-header">
-          <span class="section-title">预警订阅</span>
-          <el-button type="primary" size="small" @click="saveAlertSubscription" :loading="savingSubscription">保存配置</el-button>
+          <span class="section-title">选题建议</span>
+          <span class="section-tip">基于热词趋势、竞争度、情感综合分析</span>
         </div>
-
-        <el-form :inline="true" class="alert-form">
-          <el-form-item label="启用">
-            <el-switch v-model="alertSubscription.enabled" />
-          </el-form-item>
-          <el-form-item label="最低频次">
-            <el-input-number v-model="alertSubscription.min_frequency" :min="1" :max="10000" size="small" />
-          </el-form-item>
-          <el-form-item label="增长阈值">
-            <el-input-number v-model="alertSubscription.growth_threshold" :min="0" :max="100" :step="0.1" :precision="2" size="small" />
-          </el-form-item>
-          <el-form-item label="机会情感阈值">
-            <el-input-number v-model="alertSubscription.opportunity_sentiment_threshold" :min="0" :max="1" :step="0.05" :precision="2" size="small" />
-          </el-form-item>
-          <el-form-item label="风险情感阈值">
-            <el-input-number v-model="alertSubscription.negative_sentiment_threshold" :min="0" :max="1" :step="0.05" :precision="2" size="small" />
-          </el-form-item>
-          <el-form-item label="高互动阈值">
-            <el-input-number v-model="alertSubscription.interaction_threshold" :min="0" :max="1" :step="0.01" :precision="2" size="small" />
-          </el-form-item>
-          <el-form-item label="命中条数">
-            <el-input-number v-model="alertSubscription.top_k" :min="1" :max="100" size="small" />
-          </el-form-item>
-        </el-form>
-
-        <div class="section-header">
-          <span class="section-title">预警命中</span>
-          <el-button size="small" @click="loadAlertHits" :loading="loadingAlertHits">刷新命中</el-button>
-        </div>
-        <el-table :data="alertHits" size="small" stripe max-height="320" v-loading="loadingAlertHits" empty-text="当前无命中">
-          <el-table-column prop="word" label="热词" min-width="120" />
-          <el-table-column label="类型" width="90">
-            <template #default="{ row }">
-              <el-tag :type="row.alert_type === 'risk' ? 'danger' : 'success'" size="small">
-                {{ row.alert_type === 'risk' ? '风险' : '机会' }}
+        <div class="suggestions-grid" v-if="suggestionsData.length > 0">
+          <div
+            v-for="item in suggestionsData"
+            :key="item.word"
+            class="suggestion-card"
+            @click="selectKeyword(item.word)"
+          >
+            <div class="suggestion-header">
+              <span class="suggestion-word">{{ item.word }}</span>
+              <span class="suggestion-score">{{ item.opportunity_score.toFixed(2) }}</span>
+            </div>
+            <div class="suggestion-tags">
+              <el-tag
+                size="small"
+                :type="item.competition === 'low' ? 'success' : item.competition === 'medium' ? 'warning' : 'danger'"
+              >
+                {{ item.competition === 'low' ? '低竞争' : item.competition === 'medium' ? '中竞争' : '高竞争' }}
               </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="涨幅" width="90">
-            <template #default="{ row }">{{ (row.change_rate * 100).toFixed(0) }}%</template>
-          </el-table-column>
-          <el-table-column prop="reason" label="原因" min-width="220" show-overflow-tooltip />
-        </el-table>
+              <el-tag size="small" :type="item.trend_direction === 'rising' ? 'success' : item.trend_direction === 'falling' ? 'danger' : 'info'">
+                {{ item.trend_direction === 'rising' ? '上升' : item.trend_direction === 'falling' ? '下降' : '平稳' }}
+              </el-tag>
+            </div>
+            <div class="suggestion-text">{{ item.suggestion_text }}</div>
+            <div class="suggestion-gaps" v-if="item.category_gaps.length > 0">
+              <span class="gap-label">分区缺口:</span>
+              <el-tag v-for="gap in item.category_gaps" :key="gap.category" size="small" type="warning" effect="plain">
+                {{ gap.category }}
+              </el-tag>
+            </div>
+          </div>
+        </div>
+        <el-empty v-else-if="!loadingSuggestions" description="暂无选题建议" :image-size="48" />
       </div>
     </div>
 
@@ -444,11 +511,10 @@ import {
   getKeywordOpportunityRisk,
   getKeywordDetail,
   getKeywordContributors,
-  getKeywordAlertSubscription,
-  updateKeywordAlertSubscription,
-  getKeywordAlertHits,
   compareKeywords,
-  exportKeywords
+  exportKeywords,
+  getCategoryCompare,
+  getContentSuggestions
 } from '@/api/keywords'
 import { getCategories } from '@/api/videos'
 
@@ -464,8 +530,8 @@ const loadingCompare = ref(false)
 const loadingMovers = ref(false)
 const loadingOpportunityRisk = ref(false)
 const loadingContributors = ref(false)
-const loadingAlertHits = ref(false)
-const savingSubscription = ref(false)
+const loadingCategoryCompare = ref(false)
+const loadingSuggestions = ref(false)
 
 // 筛选条件
 const dateRange = ref([])
@@ -499,7 +565,9 @@ const overviewStats = reactive({
   total_frequency: 0,
   top_keyword: null,
   new_keywords: 0,
-  source_distribution: { title: 0, comment: 0, danmaku: 0 }
+  source_distribution: { title: 0, comment: 0, danmaku: 0 },
+  stat_date: null,
+  data_days: 0
 })
 
 const wordcloudData = ref([])
@@ -512,26 +580,28 @@ const pageSize = ref(20)
 const selectedWord = ref('')
 const keywordDetail = ref(null)
 const contributorVideos = ref([])
+const detailDrawerVisible = ref(false)
 
 // P0 洞察
 const moversData = reactive({
   rising: [],
-  falling: []
+  falling: [],
+  previous_date: null
 })
 const opportunityRiskData = reactive({
   opportunities: [],
   risks: []
 })
-const alertSubscription = reactive({
-  enabled: true,
-  min_frequency: 20,
-  growth_threshold: 1,
-  opportunity_sentiment_threshold: 0.6,
-  negative_sentiment_threshold: 0.4,
-  interaction_threshold: 0.05,
-  top_k: 10
-})
-const alertHits = ref([])
+
+// 分区全景
+const categoryCompareData = ref([])
+const selectedCategory = ref('')
+
+// 选题建议
+const suggestionsData = ref([])
+
+// 搜索建议
+const searchSuggestions = ref([])
 
 // 对比
 const compareDialogVisible = ref(false)
@@ -544,19 +614,35 @@ const sourcePieRef = ref(null)
 const trendLineRef = ref(null)
 const categoryBarRef = ref(null)
 const compareChartRef = ref(null)
+const categoryBarCompareRef = ref(null)
 
 let wordcloudChart = null
+let categoryBarCompareChart = null
 let sourcePieChart = null
 let trendLineChart = null
 let categoryBarChart = null
 let compareChart = null
 let searchTimer = null
+let resizeTimer = null
 
 // ========== 方法 ==========
 const formatNumber = (num) => {
   if (!num) return '0'
   if (num >= 10000) return (num / 10000).toFixed(1) + '万'
   return num.toString()
+}
+
+const formatSignedDelta = (value) => {
+  const num = Number(value || 0)
+  const abs = Math.abs(num)
+  const text = formatNumber(abs)
+  if (num > 0) return `+${text}`
+  if (num < 0) return `-${text}`
+  return text
+}
+
+const formatRatePercent = (rate) => {
+  return `${(Number(rate || 0) * 100).toFixed(0)}%`
 }
 
 const getRankClass = (index) => {
@@ -570,6 +656,18 @@ const getSentimentClass = (score) => {
   if (score >= 0.6) return 'positive'
   if (score <= 0.4) return 'negative'
   return 'neutral'
+}
+
+const isDataStale = ref(false)
+const checkDataFreshness = () => {
+  if (!overviewStats.stat_date) {
+    isDataStale.value = false
+    return
+  }
+  const statDate = new Date(overviewStats.stat_date)
+  const now = new Date()
+  const diffDays = Math.floor((now - statDate) / (24 * 3600 * 1000))
+  isDataStale.value = diffDays > 3
 }
 
 const getTrendDays = () => {
@@ -595,6 +693,7 @@ const handleFilterChange = () => {
   selectedWord.value = ''
   keywordDetail.value = null
   contributorVideos.value = []
+  detailDrawerVisible.value = false
   disposeDetailCharts()
   loadAllData()
 }
@@ -629,8 +728,10 @@ const loadOverview = async () => {
   try {
     const res = await getKeywordOverview(getFilterParams())
     Object.assign(overviewStats, res)
+    checkDataFreshness()
   } catch (e) {
     console.error('获取概览失败', e)
+    ElMessage.warning('获取概览数据失败')
   } finally {
     loadingOverview.value = false
   }
@@ -646,6 +747,7 @@ const loadWordcloud = async () => {
     renderWordcloud()
   } catch (e) {
     console.error('获取词云失败', e)
+    ElMessage.warning('获取词云数据失败')
   } finally {
     loadingWordcloud.value = false
   }
@@ -667,6 +769,7 @@ const loadRanking = async () => {
     rankingTotal.value = res.total || 0
   } catch (e) {
     console.error('获取排行榜失败', e)
+    ElMessage.warning('获取排行榜失败')
   } finally {
     loadingRanking.value = false
   }
@@ -678,13 +781,15 @@ const loadMovers = async () => {
     const params = {
       ...getFilterParams(),
       top_k: 10,
-      min_frequency: alertSubscription.min_frequency
+      min_frequency: 20
     }
     const res = await getKeywordMovers(params)
     moversData.rising = res.rising || []
     moversData.falling = res.falling || []
+    moversData.previous_date = res.previous_date || null
   } catch (e) {
     console.error('获取异动榜失败', e)
+    ElMessage.warning('获取异动数据失败')
   } finally {
     loadingMovers.value = false
   }
@@ -696,61 +801,52 @@ const loadOpportunityRisk = async () => {
     const params = {
       ...getFilterParams(),
       top_k: 10,
-      min_frequency: alertSubscription.min_frequency,
-      interaction_threshold: alertSubscription.interaction_threshold
+      min_frequency: 20,
+      interaction_threshold: 0.05
     }
     const res = await getKeywordOpportunityRisk(params)
     opportunityRiskData.opportunities = res.opportunities || []
     opportunityRiskData.risks = res.risks || []
   } catch (e) {
     console.error('获取机会/风险榜失败', e)
+    ElMessage.warning('获取机会/风险数据失败')
   } finally {
     loadingOpportunityRisk.value = false
   }
 }
 
-const loadAlertSubscription = async () => {
+const loadCategoryCompare = async () => {
+  loadingCategoryCompare.value = true
   try {
-    const res = await getKeywordAlertSubscription()
-    Object.assign(alertSubscription, res || {})
-  } catch (e) {
-    console.error('获取预警配置失败', e)
-  }
-}
-
-const saveAlertSubscription = async () => {
-  savingSubscription.value = true
-  try {
-    const payload = {
-      enabled: alertSubscription.enabled,
-      min_frequency: alertSubscription.min_frequency,
-      growth_threshold: alertSubscription.growth_threshold,
-      opportunity_sentiment_threshold: alertSubscription.opportunity_sentiment_threshold,
-      negative_sentiment_threshold: alertSubscription.negative_sentiment_threshold,
-      interaction_threshold: alertSubscription.interaction_threshold,
-      top_k: alertSubscription.top_k
+    const params = { top_k: 10 }
+    const res = await getCategoryCompare(params)
+    categoryCompareData.value = res.categories || []
+    if (categoryCompareData.value.length > 0 && !selectedCategory.value) {
+      selectedCategory.value = categoryCompareData.value[0].category
     }
-    const res = await updateKeywordAlertSubscription(payload)
-    Object.assign(alertSubscription, res || {})
-    ElMessage.success('预警配置已保存')
-    await Promise.all([loadMovers(), loadOpportunityRisk(), loadAlertHits()])
+    await nextTick()
+    renderCategoryBarCompare()
   } catch (e) {
-    ElMessage.error('保存预警配置失败')
+    console.error('获取分区全景失败', e)
   } finally {
-    savingSubscription.value = false
+    loadingCategoryCompare.value = false
   }
 }
 
-const loadAlertHits = async () => {
-  loadingAlertHits.value = true
+const loadSuggestions = async () => {
+  loadingSuggestions.value = true
   try {
-    const params = { ...getFilterParams() }
-    const res = await getKeywordAlertHits(params)
-    alertHits.value = res.hits || []
+    const params = {
+      ...getFilterParams(),
+      top_k: 5,
+      min_frequency: 20
+    }
+    const res = await getContentSuggestions(params)
+    suggestionsData.value = res.suggestions || []
   } catch (e) {
-    console.error('获取预警命中失败', e)
+    console.error('获取选题建议失败', e)
   } finally {
-    loadingAlertHits.value = false
+    loadingSuggestions.value = false
   }
 }
 
@@ -762,15 +858,20 @@ const loadAllData = async () => {
     loadRanking(),
     loadMovers(),
     loadOpportunityRisk(),
-    loadAlertHits()
+    loadCategoryCompare(),
+    loadSuggestions()
   ])
   loading.value = false
 }
 
 // ========== 详情 ==========
 const selectKeyword = async (word) => {
-  if (selectedWord.value === word) return
+  if (selectedWord.value === word) {
+    detailDrawerVisible.value = true
+    return
+  }
   selectedWord.value = word
+  detailDrawerVisible.value = true
   loadingDetail.value = true
   contributorVideos.value = []
   disposeDetailCharts()
@@ -799,6 +900,22 @@ const disposeDetailCharts = () => {
   sourcePieChart = null
   trendLineChart = null
   categoryBarChart = null
+}
+
+const onDrawerOpened = () => {
+  if (keywordDetail.value && !loadingDetail.value) {
+    nextTick(() => {
+      disposeDetailCharts()
+      renderDetailCharts()
+    })
+  }
+}
+
+const onDrawerClose = () => {
+  selectedWord.value = ''
+  keywordDetail.value = null
+  contributorVideos.value = []
+  disposeDetailCharts()
 }
 
 const renderWordcloud = () => {
@@ -905,14 +1022,105 @@ const renderDetailCharts = () => {
 }
 
 const handleResize = () => {
-  wordcloudChart?.resize()
-  sourcePieChart?.resize()
-  trendLineChart?.resize()
-  categoryBarChart?.resize()
-  compareChart?.resize()
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    wordcloudChart?.resize()
+    sourcePieChart?.resize()
+    trendLineChart?.resize()
+    categoryBarChart?.resize()
+    compareChart?.resize()
+    categoryBarCompareChart?.resize()
+  }, 200)
 }
 
 // ========== 导出 ==========
+
+// 分区全景图表
+const renderCategoryBarCompare = () => {
+  if (categoryBarCompareChart) categoryBarCompareChart.dispose()
+  if (!categoryBarCompareRef.value) return
+
+  const catData = categoryCompareData.value.find(c => c.category === selectedCategory.value)
+  if (!catData || !catData.keywords?.length) {
+    categoryBarCompareChart = null
+    return
+  }
+
+  categoryBarCompareChart = echarts.init(categoryBarCompareRef.value)
+  const keywords = catData.keywords.slice(0, 10)
+
+  categoryBarCompareChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const d = params[0]
+        const kw = keywords[d.dataIndex]
+        let tip = `${d.name}: ${d.value}`
+        if (kw.is_niche) tip += '<br/><span style="color:#E6A23C">独有热词</span>'
+        else if (kw.cross_category_count >= 3) tip += `<br/><span style="color:#409EFF">跨${kw.cross_category_count}个分区</span>`
+        return tip
+      }
+    },
+    grid: { left: '3%', right: '8%', bottom: '3%', top: '10%', containLabel: true },
+    xAxis: { type: 'value', name: '频次' },
+    yAxis: {
+      type: 'category',
+      data: keywords.map(k => k.word).reverse(),
+      axisLabel: { fontSize: 12 }
+    },
+    series: [{
+      type: 'bar',
+      data: keywords.map(k => ({
+        value: k.frequency,
+        itemStyle: {
+          color: k.is_niche ? '#E6A23C' : (k.cross_category_count >= 3 ? '#409EFF' : '#00A1D6'),
+          borderRadius: [0, 4, 4, 0]
+        }
+      })).reverse()
+    }]
+  })
+
+  categoryBarCompareChart.on('click', (params) => {
+    const kw = keywords[keywords.length - 1 - params.dataIndex]
+    if (kw) selectKeyword(kw.word)
+  })
+}
+
+const handleCategorySelect = (cat) => {
+  selectedCategory.value = cat
+  nextTick(() => renderCategoryBarCompare())
+}
+
+// 搜索建议
+const fetchSearchSuggestions = async (queryString, cb) => {
+  if (!queryString || queryString.length < 1) {
+    cb([])
+    return
+  }
+  try {
+    const params = {
+      ...getFilterParams(),
+      search: queryString,
+      page: 1,
+      page_size: 10,
+      order_by: 'frequency'
+    }
+    const res = await getKeywordRanking(params)
+    cb((res.items || []).map(item => ({
+      ...item,
+      value: item.word
+    })))
+  } catch (e) {
+    cb([])
+  }
+}
+
+const handleSearchSelect = (item) => {
+  selectKeyword(item.word)
+}
+
+// ========== 导出（原有） ==========
 const handleExport = async () => {
   try {
     const params = {
@@ -989,7 +1197,7 @@ const loadCompareData = async () => {
 
 const openCompareDialog = () => {
   compareDialogVisible.value = true
-  if (selectedWord.value && !compareWords.value.includes(selectedWord.value)) {
+  if (selectedWord.value && !compareWords.value.includes(selectedWord.value) && compareWords.value.length < 5) {
     compareWords.value.push(selectedWord.value)
   }
   loadCompareData()
@@ -1029,7 +1237,6 @@ const goToVideo = (bvid) => {
 // ========== 生命周期 ==========
 onMounted(async () => {
   await loadCategories()
-  await loadAlertSubscription()
   await loadAllData()
   window.addEventListener('resize', handleResize)
 })
@@ -1039,7 +1246,9 @@ onUnmounted(() => {
   wordcloudChart?.dispose()
   disposeDetailCharts()
   compareChart?.dispose()
+  categoryBarCompareChart?.dispose()
   if (searchTimer) clearTimeout(searchTimer)
+  if (resizeTimer) clearTimeout(resizeTimer)
 })
 </script>
 
@@ -1088,6 +1297,54 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
+/* 数据新鲜度 */
+.data-freshness {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-white);
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+
+.freshness-text {
+  color: var(--text-secondary);
+}
+
+.stale-warning {
+  color: #E6A23C;
+  font-weight: 500;
+}
+
+/* 搜索建议 */
+.search-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.search-suggestion-item .suggestion-word {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.search-suggestion-item .suggestion-freq {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.search-suggestion-item .suggestion-trend {
+  width: 16px;
+}
+
+.search-suggestion-item .suggestion-trend.up { color: #00B578; }
+.search-suggestion-item .suggestion-trend.down { color: #F56C6C; }
+.search-suggestion-item .suggestion-trend.stable { color: var(--text-secondary); }
+
 .filter-form {
   display: flex;
   flex-wrap: wrap;
@@ -1101,13 +1358,6 @@ onUnmounted(() => {
 
 /* 主内容区 */
 .main-content {
-  display: grid;
-  grid-template-columns: 400px 1fr;
-  gap: 20px;
-}
-
-/* 左侧面板 */
-.left-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1116,7 +1366,7 @@ onUnmounted(() => {
 /* 统计卡片 */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 
@@ -1185,6 +1435,13 @@ onUnmounted(() => {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
+}
+
+/* 词云 + 排行榜 并排 */
+.content-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
 }
 
 /* 词云区域 */
@@ -1305,20 +1562,9 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-/* 右侧面板 */
-.right-panel {
-  background: var(--bg-white);
-  border-radius: 8px;
+/* 抽屉内部 */
+.drawer-loading {
   padding: 20px;
-  min-height: 600px;
-}
-
-.empty-state,
-.loading-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 400px;
 }
 
 /* 详情内容 */
@@ -1399,6 +1645,25 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
+/* 关联热词 */
+.related-keywords {
+  background: var(--bg-gray-light);
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.keyword-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.related-tag:hover {
+  background: rgba(0, 161, 214, 0.1);
+  border-color: #00A1D6;
+  color: #00A1D6;
+}
+
 .related-videos .section-title {
   font-size: 14px;
   font-weight: 500;
@@ -1459,6 +1724,62 @@ onUnmounted(() => {
   gap: 16px;
 }
 
+/* 分区全景 */
+.category-landscape {
+  margin-top: 16px;
+}
+
+.category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.category-tab {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-gray-light);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.category-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-gray);
+}
+
+.category-tab.active {
+  color: #fff;
+  background: #00A1D6;
+}
+
+.category-legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.category-bar-chart {
+  height: 280px;
+}
+
 .action-card {
   background: var(--bg-white);
   border-radius: 8px;
@@ -1469,6 +1790,16 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+
+.data-hint {
+  font-size: 13px;
+  color: #E6A23C;
+  background: #FDF6EC;
+  border: 1px solid #FAECD8;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
 }
 
 .action-list {
@@ -1519,6 +1850,80 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
+.action-tag.new-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: #00A1D6;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* 选题建议 */
+.suggestions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.suggestion-card {
+  background: var(--bg-gray-light);
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+
+.suggestion-card:hover {
+  border-color: #00A1D6;
+  box-shadow: 0 2px 8px rgba(0, 161, 214, 0.1);
+}
+
+.suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.suggestion-header .suggestion-word {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.suggestion-score {
+  font-size: 13px;
+  font-weight: 500;
+  color: #00B578;
+}
+
+.suggestion-tags {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.suggestion-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.suggestion-gaps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gap-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .alert-form {
   margin-bottom: 12px;
 }
@@ -1541,21 +1946,16 @@ onUnmounted(() => {
 
 /* 响应式 */
 @media (max-width: 1200px) {
-  .main-content {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .content-row {
     grid-template-columns: 1fr;
   }
 
   .action-grid {
     grid-template-columns: 1fr;
-  }
-
-  .left-panel {
-    order: 2;
-  }
-
-  .right-panel {
-    order: 1;
-    min-height: auto;
   }
 }
 </style>

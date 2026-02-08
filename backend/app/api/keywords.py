@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.api.auth import get_current_user
-from app.models.models import User, Video, KeywordAlertSubscription
+from app.models.models import User, Video
 from app.models.warehouse import DwdKeywordDaily, DwdVideoSnapshot, DwsKeywordStats
 
 
@@ -39,6 +39,8 @@ class KeywordOverview(BaseModel):
     top_keyword: Optional[dict] = None
     new_keywords: int
     source_distribution: dict
+    stat_date: Optional[str] = None
+    data_days: int = 0
 
 
 class WordcloudItem(BaseModel):
@@ -95,6 +97,13 @@ class RelatedVideo(BaseModel):
     play_count: int
 
 
+class RelatedKeywordItem(BaseModel):
+    """关联热词"""
+    word: str
+    co_occurrence: int
+    heat_score: Optional[float] = None
+
+
 class KeywordDetail(BaseModel):
     """热词详情"""
     word: str
@@ -105,6 +114,7 @@ class KeywordDetail(BaseModel):
     trend: List[TrendPoint]
     avg_sentiment: Optional[float] = None
     related_videos: List[RelatedVideo]
+    related_keywords: List[RelatedKeywordItem] = []
 
 
 class CompareRequest(BaseModel):
@@ -131,6 +141,8 @@ class CategoryKeyword(BaseModel):
     word: str
     frequency: int
     rank: int
+    cross_category_count: int = 1
+    is_niche: bool = False
 
 
 class CategoryCompareItem(BaseModel):
@@ -153,6 +165,7 @@ class MoverItem(BaseModel):
     change_rate: float
     heat_score: float
     avg_sentiment: Optional[float] = None
+    is_new: bool = False
 
 
 class MoversResponse(BaseModel):
@@ -202,44 +215,29 @@ class KeywordContributorsResponse(BaseModel):
     items: List[ContributorVideoItem]
 
 
-class AlertSubscriptionResponse(BaseModel):
-    """预警订阅配置"""
-    enabled: bool
-    min_frequency: int
-    growth_threshold: float
-    opportunity_sentiment_threshold: float
-    negative_sentiment_threshold: float
-    interaction_threshold: float
-    top_k: int
+class CategoryGap(BaseModel):
+    """分区缺口"""
+    category: str
+    gap_level: str  # high, medium, low
 
 
-class AlertSubscriptionUpdate(BaseModel):
-    """预警订阅配置更新"""
-    enabled: bool = True
-    min_frequency: int = Field(20, ge=1, le=10000)
-    growth_threshold: float = Field(1.0, ge=0.0, le=100.0)
-    opportunity_sentiment_threshold: float = Field(0.6, ge=0.0, le=1.0)
-    negative_sentiment_threshold: float = Field(0.4, ge=0.0, le=1.0)
-    interaction_threshold: float = Field(0.05, ge=0.0, le=1.0)
-    top_k: int = Field(10, ge=1, le=100)
-
-
-class AlertHitItem(BaseModel):
-    """预警命中项"""
+class ContentSuggestionItem(BaseModel):
+    """选题建议项"""
     word: str
-    alert_type: str
-    reason: str
-    score: float
-    current_frequency: int
-    change_rate: float
+    opportunity_score: float
+    competition: str  # low, medium, high
+    trend_direction: str  # rising, stable, falling
     avg_sentiment: Optional[float] = None
-    high_interaction_ratio: float
+    video_count: int = 0
+    category_gaps: List[CategoryGap] = []
+    suggestion_text: str = ""
+    example_videos: List[RelatedVideo] = []
 
 
-class AlertHitsResponse(BaseModel):
-    """预警命中响应"""
-    stat_date: Optional[str] = None
-    hits: List[AlertHitItem]
+class ContentSuggestionsResponse(BaseModel):
+    """选题建议响应"""
+    stat_date: str
+    suggestions: List[ContentSuggestionItem]
 
 
 # ==================== 辅助函数 ====================
@@ -467,6 +465,7 @@ def build_keyword_insights(
             continue
 
         previous_frequency = previous_map.get(word, {}).get("total_frequency", 0)
+        is_new = previous_frequency == 0 and current_frequency > 0
         change_abs = current_frequency - previous_frequency
         change_rate = calc_change_rate(current_frequency, previous_frequency)
         dws = dws_map.get(word)
@@ -510,6 +509,7 @@ def build_keyword_insights(
             "word": word,
             "current_frequency": current_frequency,
             "previous_frequency": previous_frequency,
+            "is_new": is_new,
             "change_abs": change_abs,
             "change_rate": change_rate,
             "heat_score": heat_score,
@@ -524,33 +524,6 @@ def build_keyword_insights(
         "previous_date": previous_date,
         "items": items
     }
-
-
-def get_or_init_subscription(
-    db: Session,
-    current_user: User
-) -> KeywordAlertSubscription:
-    """获取或初始化用户预警订阅配置"""
-    subscription = db.query(KeywordAlertSubscription).filter(
-        KeywordAlertSubscription.user_id == current_user.id
-    ).first()
-    if subscription:
-        return subscription
-
-    subscription = KeywordAlertSubscription(
-        user_id=current_user.id,
-        enabled=True,
-        min_frequency=20,
-        growth_threshold=1.0,
-        opportunity_sentiment_threshold=0.6,
-        negative_sentiment_threshold=0.4,
-        interaction_threshold=0.05,
-        top_k=10,
-    )
-    db.add(subscription)
-    db.commit()
-    db.refresh(subscription)
-    return subscription
 
 
 # ==================== API接口 ====================
@@ -582,7 +555,9 @@ def get_keyword_overview(
             total_frequency=0,
             top_keyword=None,
             new_keywords=0,
-            source_distribution={"title": 0, "comment": 0, "danmaku": 0}
+            source_distribution={"title": 0, "comment": 0, "danmaku": 0},
+            stat_date=None,
+            data_days=0
         )
 
     latest_rows = get_filtered_rows(
@@ -620,12 +595,20 @@ def get_keyword_overview(
     history_words = {word for (word,) in history_query.all()}
     new_keywords = len(latest_words - history_words)
 
+    # 统计日期范围内有数据的天数
+    data_days = db.query(func.count(func.distinct(DwdKeywordDaily.stat_date))).filter(
+        DwdKeywordDaily.stat_date >= start_date,
+        DwdKeywordDaily.stat_date <= end_date
+    ).scalar() or 0
+
     return KeywordOverview(
         total_keywords=total_keywords,
         total_frequency=total_frequency,
         top_keyword=top_keyword,
         new_keywords=new_keywords,
-        source_distribution=source_distribution
+        source_distribution=source_distribution,
+        stat_date=str(latest_date),
+        data_days=data_days
     )
 
 
@@ -837,6 +820,7 @@ def get_keyword_movers(
                 change_rate=round(item["change_rate"], 4),
                 heat_score=round(item["heat_score"], 4),
                 avg_sentiment=item["avg_sentiment"],
+                is_new=item["is_new"],
             )
             for item in rising
         ],
@@ -849,6 +833,7 @@ def get_keyword_movers(
                 change_rate=round(item["change_rate"], 4),
                 heat_score=round(item["heat_score"], 4),
                 avg_sentiment=item["avg_sentiment"],
+                is_new=item["is_new"],
             )
             for item in falling
         ]
@@ -913,6 +898,187 @@ def get_keyword_opportunity_risk(
             for item in risks
         ]
     )
+
+
+@router.get("/content-suggestions", response_model=ContentSuggestionsResponse)
+def get_content_suggestions(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    category: Optional[str] = None,
+    source: Optional[str] = None,
+    top_k: int = Query(5, ge=1, le=10),
+    min_frequency: int = Query(20, ge=1, le=10000),
+    interaction_threshold: float = Query(0.05, ge=0.0, le=1.0),
+    db: Session = Depends(get_db)
+):
+    """
+    内容选题建议：基于机会词生成可操作的选题建议
+    """
+    insight = build_keyword_insights(
+        db=db,
+        start_date=start_date,
+        end_date=end_date,
+        category=category,
+        source=source,
+        min_frequency=min_frequency,
+        interaction_threshold=interaction_threshold,
+    )
+    latest_date = insight["latest_date"]
+    if not latest_date:
+        return ContentSuggestionsResponse(stat_date="", suggestions=[])
+
+    # 按机会分排序取 TOP
+    items = sorted(insight["items"], key=lambda x: x["opportunity_score"], reverse=True)[:top_k]
+    words = [item["word"] for item in items]
+
+    # 获取 DWS 趋势数据
+    dws_map = get_dws_map(db, latest_date, words)
+
+    # 获取分区分布（用于分析分区缺口）
+    all_category_rows = db.query(
+        DwdKeywordDaily.word,
+        DwdKeywordDaily.category,
+        func.sum(DwdKeywordDaily.frequency).label("freq")
+    ).filter(
+        DwdKeywordDaily.stat_date == latest_date,
+        DwdKeywordDaily.word.in_(words),
+        DwdKeywordDaily.category.isnot(None)
+    ).group_by(
+        DwdKeywordDaily.word,
+        DwdKeywordDaily.category
+    ).all()
+
+    # 构建词→分区频次映射
+    word_cat_freq: Dict[str, Dict[str, int]] = {}
+    for row in all_category_rows:
+        word_cat_freq.setdefault(row.word, {})[row.category] = row.freq or 0
+
+    # 获取所有分区列表
+    all_categories = db.query(DwdKeywordDaily.category).filter(
+        DwdKeywordDaily.stat_date == latest_date,
+        DwdKeywordDaily.category.isnot(None)
+    ).distinct().all()
+    all_cat_names = [c[0] for c in all_categories]
+
+    # 获取样例视频
+    all_bvids: Set[str] = set()
+    kw_rows = db.query(DwdKeywordDaily).filter(
+        DwdKeywordDaily.stat_date == latest_date,
+        DwdKeywordDaily.word.in_(words)
+    ).all()
+    word_bvids: Dict[str, Set[str]] = {}
+    for row in kw_rows:
+        bvids = parse_sample_bvids(row.sample_bvids)
+        word_bvids.setdefault(row.word, set()).update(bvids)
+        all_bvids.update(bvids)
+
+    video_map = {}
+    if all_bvids:
+        videos = db.query(Video).filter(Video.bvid.in_(list(all_bvids))).all()
+        video_map = {v.bvid: v for v in videos}
+
+    # 构建建议
+    suggestions = []
+    for item in items:
+        word = item["word"]
+        dws = dws_map.get(word)
+
+        # 竞争度
+        video_count = 0
+        bvids = word_bvids.get(word, set())
+        if bvids:
+            video_count = len(bvids)
+        if video_count <= 5:
+            competition = "low"
+        elif video_count <= 20:
+            competition = "medium"
+        else:
+            competition = "high"
+
+        # 趋势方向
+        freq_trend = dws.frequency_trend if dws else 0
+        if freq_trend and freq_trend > 0.1:
+            trend_direction = "rising"
+        elif freq_trend and freq_trend < -0.1:
+            trend_direction = "falling"
+        else:
+            trend_direction = "stable"
+
+        # 分区缺口分析
+        cat_freqs = word_cat_freq.get(word, {})
+        max_cat_freq = int(max(cat_freqs.values())) if cat_freqs else 0
+        category_gaps = []
+        for cat_name in all_cat_names:
+            cat_freq = cat_freqs.get(cat_name, 0)
+            if max_cat_freq > 0 and cat_freq < max_cat_freq * 0.2:
+                category_gaps.append(CategoryGap(
+                    category=cat_name,
+                    gap_level="high" if cat_freq == 0 else "medium"
+                ))
+        category_gaps = category_gaps[:3]  # 最多3个缺口
+
+        # 生成建议文本
+        suggestion_text = _generate_suggestion_text(
+            word, competition, trend_direction,
+            item.get("avg_sentiment"), category_gaps
+        )
+
+        # 参考视频
+        example_videos = []
+        for bvid in list(bvids)[:3]:
+            v = video_map.get(bvid)
+            if v:
+                example_videos.append(RelatedVideo(
+                    bvid=v.bvid,
+                    title=v.title,
+                    cover_url=v.cover_url,
+                    play_count=v.play_count or 0
+                ))
+
+        suggestions.append(ContentSuggestionItem(
+            word=word,
+            opportunity_score=round(item["opportunity_score"], 4),
+            competition=competition,
+            trend_direction=trend_direction,
+            avg_sentiment=item.get("avg_sentiment"),
+            video_count=video_count,
+            category_gaps=category_gaps,
+            suggestion_text=suggestion_text,
+            example_videos=example_videos
+        ))
+
+    return ContentSuggestionsResponse(
+        stat_date=str(latest_date),
+        suggestions=suggestions
+    )
+
+
+def _generate_suggestion_text(
+    word: str,
+    competition: str,
+    trend_direction: str,
+    avg_sentiment: Optional[float],
+    category_gaps: List[CategoryGap]
+) -> str:
+    """基于规则模板生成选题建议文本"""
+    if competition == "low" and trend_direction == "rising":
+        return f"蓝海选题：「{word}」正在升温且竞争较少，建议尽快切入"
+
+    high_gaps = [g for g in category_gaps if g.gap_level == "high"]
+    if high_gaps:
+        gap_cats = "、".join(g.category for g in high_gaps[:2])
+        return f"跨区机会：「{word}」在{gap_cats}分区几乎空白，可差异化切入"
+
+    if avg_sentiment is not None and avg_sentiment > 0.6:
+        return f"高互动选题：「{word}」相关内容观众反馈积极，互动率高"
+
+    if trend_direction == "rising":
+        return f"上升趋势：「{word}」热度持续上升，值得关注"
+
+    if competition == "low":
+        return f"低竞争选题：「{word}」当前覆盖视频较少，存在内容缺口"
+
+    return f"热门选题：「{word}」热度较高，可结合差异化角度切入"
 
 
 @router.get("/{word}/contributors", response_model=KeywordContributorsResponse)
@@ -1035,7 +1201,7 @@ def get_keyword_detail(
     sorted_words = sorted(all_word_map.values(), key=lambda x: x["total_frequency"], reverse=True)
     current_rank = next(
         (idx + 1 for idx, item in enumerate(sorted_words) if item["word"] == word),
-        1
+        len(sorted_words) + 1
     )
 
     source_distribution = {
@@ -1100,6 +1266,35 @@ def get_keyword_detail(
             for v in videos
         ]
 
+    # 关联热词：基于 sample_bvids 共现分析
+    related_keywords = []
+    if bvid_set:
+        all_kw_rows = db.query(DwdKeywordDaily).filter(
+            DwdKeywordDaily.stat_date == latest_date,
+            DwdKeywordDaily.word != word
+        ).all()
+
+        co_occurrence: Dict[str, int] = {}
+        for row in all_kw_rows:
+            row_bvids = parse_sample_bvids(row.sample_bvids)
+            overlap = bvid_set & row_bvids
+            if overlap:
+                co_occurrence[row.word] = co_occurrence.get(row.word, 0) + len(overlap)
+
+        if co_occurrence:
+            # 获取热度分
+            co_words = list(co_occurrence.keys())
+            co_dws_map = get_dws_map(db, latest_date, co_words)
+            sorted_co = sorted(co_occurrence.items(), key=lambda x: x[1], reverse=True)[:10]
+            related_keywords = [
+                RelatedKeywordItem(
+                    word=w,
+                    co_occurrence=cnt,
+                    heat_score=round(co_dws_map[w].heat_score, 4) if co_dws_map.get(w) else None
+                )
+                for w, cnt in sorted_co
+            ]
+
     return KeywordDetail(
         word=word,
         current_rank=current_rank,
@@ -1108,124 +1303,9 @@ def get_keyword_detail(
         category_distribution=category_distribution,
         trend=trend,
         avg_sentiment=latest_word["avg_sentiment"],
-        related_videos=related_videos
+        related_videos=related_videos,
+        related_keywords=related_keywords
     )
-
-
-@router.get("/alerts/subscription", response_model=AlertSubscriptionResponse)
-def get_alert_subscription(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """获取当前用户热词预警订阅配置"""
-    sub = get_or_init_subscription(db, current_user)
-    return AlertSubscriptionResponse(
-        enabled=sub.enabled,
-        min_frequency=sub.min_frequency,
-        growth_threshold=sub.growth_threshold,
-        opportunity_sentiment_threshold=sub.opportunity_sentiment_threshold,
-        negative_sentiment_threshold=sub.negative_sentiment_threshold,
-        interaction_threshold=sub.interaction_threshold,
-        top_k=sub.top_k,
-    )
-
-
-@router.put("/alerts/subscription", response_model=AlertSubscriptionResponse)
-def update_alert_subscription(
-    payload: AlertSubscriptionUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """更新当前用户热词预警订阅配置"""
-    sub = get_or_init_subscription(db, current_user)
-    sub.enabled = payload.enabled
-    sub.min_frequency = payload.min_frequency
-    sub.growth_threshold = payload.growth_threshold
-    sub.opportunity_sentiment_threshold = payload.opportunity_sentiment_threshold
-    sub.negative_sentiment_threshold = payload.negative_sentiment_threshold
-    sub.interaction_threshold = payload.interaction_threshold
-    sub.top_k = payload.top_k
-    db.commit()
-    db.refresh(sub)
-
-    return AlertSubscriptionResponse(
-        enabled=sub.enabled,
-        min_frequency=sub.min_frequency,
-        growth_threshold=sub.growth_threshold,
-        opportunity_sentiment_threshold=sub.opportunity_sentiment_threshold,
-        negative_sentiment_threshold=sub.negative_sentiment_threshold,
-        interaction_threshold=sub.interaction_threshold,
-        top_k=sub.top_k,
-    )
-
-
-@router.get("/alerts/hits", response_model=AlertHitsResponse)
-def get_alert_hits(
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    category: Optional[str] = None,
-    source: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """获取当前用户热词预警命中"""
-    sub = get_or_init_subscription(db, current_user)
-    if not sub.enabled:
-        return AlertHitsResponse(stat_date=None, hits=[])
-
-    insight = build_keyword_insights(
-        db=db,
-        start_date=start_date,
-        end_date=end_date,
-        category=category,
-        source=source,
-        min_frequency=sub.min_frequency,
-        interaction_threshold=sub.interaction_threshold,
-    )
-    latest_date = insight["latest_date"]
-    if not latest_date:
-        return AlertHitsResponse(stat_date=None, hits=[])
-
-    hits: List[AlertHitItem] = []
-    for item in insight["items"]:
-        change_rate = item["change_rate"]
-        avg_sentiment = item["avg_sentiment"]
-        sentiment_value = avg_sentiment if avg_sentiment is not None else 0.5
-        high_interaction_ratio = item["high_interaction_ratio"]
-
-        if (
-            change_rate >= sub.growth_threshold
-            and sentiment_value >= sub.opportunity_sentiment_threshold
-            and high_interaction_ratio >= 0.3
-        ):
-            hits.append(AlertHitItem(
-                word=item["word"],
-                alert_type="opportunity",
-                reason="增长快、情感偏正向、且高互动视频占比高",
-                score=item["opportunity_score"],
-                current_frequency=item["current_frequency"],
-                change_rate=round(change_rate, 4),
-                avg_sentiment=avg_sentiment,
-                high_interaction_ratio=round(high_interaction_ratio, 4),
-            ))
-
-        if (
-            change_rate >= sub.growth_threshold
-            and sentiment_value <= sub.negative_sentiment_threshold
-        ):
-            hits.append(AlertHitItem(
-                word=item["word"],
-                alert_type="risk",
-                reason="增长快但情感偏负向，需关注舆情风险",
-                score=item["risk_score"],
-                current_frequency=item["current_frequency"],
-                change_rate=round(change_rate, 4),
-                avg_sentiment=avg_sentiment,
-                high_interaction_ratio=round(high_interaction_ratio, 4),
-            ))
-
-    hits.sort(key=lambda x: x.score, reverse=True)
-    return AlertHitsResponse(stat_date=str(latest_date), hits=hits[:sub.top_k])
 
 
 @router.post("/compare", response_model=CompareResponse)
@@ -1319,6 +1399,14 @@ def compare_category_keywords(
             "frequency": r.total_freq
         })
 
+    # 统计每个词出现在几个分区
+    word_category_count: Dict[str, int] = {}
+    for cat, keywords in category_data.items():
+        for k in keywords:
+            word_category_count[k["word"]] = word_category_count.get(k["word"], 0) + 1
+
+    total_categories = len(category_data)
+
     # 排序并取TopK
     categories = []
     for cat, keywords in category_data.items():
@@ -1326,7 +1414,13 @@ def compare_category_keywords(
         categories.append(CategoryCompareItem(
             category=cat,
             keywords=[
-                CategoryKeyword(word=k["word"], frequency=k["frequency"], rank=i + 1)
+                CategoryKeyword(
+                    word=k["word"],
+                    frequency=k["frequency"],
+                    rank=i + 1,
+                    cross_category_count=word_category_count.get(k["word"], 1),
+                    is_niche=word_category_count.get(k["word"], 1) == 1
+                )
                 for i, k in enumerate(sorted_keywords)
             ]
         ))

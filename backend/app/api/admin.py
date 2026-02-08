@@ -6,11 +6,17 @@ from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import func, cast, Date
 from pydantic import BaseModel, field_validator
 
 from app.core.database import get_db
 from app.api.auth import get_current_user
-from app.models import User, CrawlLog, UserRole
+from app.models import User, CrawlLog, UserRole, Video, Comment, Danmaku
+from app.models.warehouse import (
+    DwdVideoSnapshot, DwdCommentDaily, DwdKeywordDaily,
+    DwsStatsDaily, DwsCategoryDaily, DwsSentimentDaily,
+    DwsVideoTrend, DwsKeywordStats,
+)
 from app.etl.scheduler import etl_scheduler
 from app.services.crawl_service import CrawlService
 
@@ -374,4 +380,158 @@ def update_bilibili_cookie(
         "message": "Cookie更新成功",
         "username": result.get("username"),
         "uid": result.get("uid")
+    }
+
+
+# ==================== 数据概览接口 ====================
+
+@router.get("/data-overview")
+def get_data_overview(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    数据概览：展示 ODS / DWD / DWS 三层数据的按日期统计
+
+    帮助管理员了解已采集哪些数据、哪些已整理、哪些未处理。
+    """
+    # ---------- ODS 层汇总 ----------
+    total_videos = db.query(func.count(Video.id)).scalar() or 0
+    total_comments = db.query(func.count(Comment.id)).scalar() or 0
+    total_danmakus = db.query(func.count(Danmaku.id)).scalar() or 0
+
+    earliest_date = db.query(func.min(func.date(Video.created_at))).scalar()
+    latest_date = db.query(func.max(func.date(Video.created_at))).scalar()
+
+    # ---------- ODS 按日期统计 ----------
+    video_date_col = func.date(Video.created_at)
+    ods_video_counts = dict(
+        db.query(video_date_col, func.count(Video.id))
+        .group_by(video_date_col).all()
+    )
+    comment_date_col = func.date(Comment.created_at)
+    ods_comment_counts = dict(
+        db.query(comment_date_col, func.count(Comment.id))
+        .group_by(comment_date_col).all()
+    )
+    danmaku_date_col = func.date(Danmaku.created_at)
+    ods_danmaku_counts = dict(
+        db.query(danmaku_date_col, func.count(Danmaku.id))
+        .group_by(danmaku_date_col).all()
+    )
+
+    # ---------- DWD 按日期统计 ----------
+    dwd_snapshot_counts = dict(
+        db.query(
+            DwdVideoSnapshot.snapshot_date,
+            func.count(DwdVideoSnapshot.id)
+        ).group_by(DwdVideoSnapshot.snapshot_date).all()
+    )
+    dwd_comment_counts = dict(
+        db.query(
+            DwdCommentDaily.stat_date,
+            func.count(DwdCommentDaily.id)
+        ).group_by(DwdCommentDaily.stat_date).all()
+    )
+    dwd_keyword_counts = dict(
+        db.query(
+            DwdKeywordDaily.stat_date,
+            func.count(DwdKeywordDaily.id)
+        ).group_by(DwdKeywordDaily.stat_date).all()
+    )
+
+    # ---------- DWS 已有日期集合 ----------
+    dws_stats_dates = {
+        row[0] for row in
+        db.query(DwsStatsDaily.stat_date).all()
+    }
+    dws_category_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsCategoryDaily.stat_date)).all()
+    }
+    dws_sentiment_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsSentimentDaily.stat_date)).all()
+    }
+    dws_video_trend_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsVideoTrend.trend_date)).all()
+    }
+    dws_keyword_stats_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsKeywordStats.stat_date)).all()
+    }
+
+    # ---------- 合并所有日期 ----------
+    all_dates = set()
+    for d in ods_video_counts:
+        all_dates.add(d)
+    for d in ods_comment_counts:
+        all_dates.add(d)
+    for d in ods_danmaku_counts:
+        all_dates.add(d)
+    for d in dwd_snapshot_counts:
+        all_dates.add(d)
+    for d in dwd_comment_counts:
+        all_dates.add(d)
+    for d in dwd_keyword_counts:
+        all_dates.add(d)
+    all_dates.update(dws_stats_dates)
+    all_dates.update(dws_category_dates)
+    all_dates.update(dws_sentiment_dates)
+    all_dates.update(dws_video_trend_dates)
+    all_dates.update(dws_keyword_stats_dates)
+
+    # ---------- 构建每日明细 ----------
+    daily_details = []
+    for d in sorted(all_dates, reverse=True):
+        ods_v = ods_video_counts.get(d, 0)
+        ods_c = ods_comment_counts.get(d, 0)
+        ods_d = ods_danmaku_counts.get(d, 0)
+
+        dwd_snap = dwd_snapshot_counts.get(d, 0)
+        dwd_comm = dwd_comment_counts.get(d, 0)
+        dwd_kw = dwd_keyword_counts.get(d, 0)
+
+        has_stats = d in dws_stats_dates
+        has_category = d in dws_category_dates
+        has_sentiment = d in dws_sentiment_dates
+        has_trend = d in dws_video_trend_dates
+        has_kw_stats = d in dws_keyword_stats_dates
+
+        # 判断 ETL 状态
+        dwd_done = dwd_snap > 0 or dwd_comm > 0 or dwd_kw > 0
+        dws_done = has_stats and has_category and has_sentiment and has_trend and has_kw_stats
+        if dwd_done and dws_done:
+            etl_status = "complete"
+        elif dwd_done or has_stats or has_category or has_sentiment or has_trend or has_kw_stats:
+            etl_status = "partial"
+        else:
+            etl_status = "missing"
+
+        daily_details.append({
+            "date": str(d),
+            "ods_videos": ods_v,
+            "ods_comments": ods_c,
+            "ods_danmakus": ods_d,
+            "dwd_video_snapshot": dwd_snap,
+            "dwd_comment_daily": dwd_comm,
+            "dwd_keyword_daily": dwd_kw,
+            "dws_stats": has_stats,
+            "dws_category": has_category,
+            "dws_sentiment": has_sentiment,
+            "dws_video_trend": has_trend,
+            "dws_keyword_stats": has_kw_stats,
+            "etl_status": etl_status,
+        })
+
+    return {
+        "ods": {
+            "videos": total_videos,
+            "comments": total_comments,
+            "danmakus": total_danmakus,
+            "earliest_date": str(earliest_date) if earliest_date else None,
+            "latest_date": str(latest_date) if latest_date else None,
+        },
+        "daily_details": daily_details,
     }
