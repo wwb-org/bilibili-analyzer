@@ -25,6 +25,14 @@ export const getCommentStats = (bvid) => {
 }
 
 /**
+ * 获取单视频评论用户画像
+ * @param {string} bvid - 视频 BV 号
+ */
+export const getCommentAudienceProfile = (bvid) => {
+  return api.get(`/comments/${bvid}/audience-profile`)
+}
+
+/**
  * 获取单视频评论列表
  * @param {string} bvid - 视频 BV 号
  * @param {Object} params - 查询参数
@@ -32,7 +40,7 @@ export const getCommentStats = (bvid) => {
  * @param {number} params.page_size - 每页数量
  * @param {string} params.sentiment - 情感筛选 (positive|neutral|negative)
  * @param {string} params.emotion - 细粒度情绪筛选 (GoEmotions 28类，如 joy|anger|sadness|surprise|neutral 等)
- * @param {string} params.sort_by - 排序方式 (like_count|created_at|sentiment_score)
+ * @param {string} params.sort_by - 排序方式 (like_count|created_at|comment_ctime|sentiment_score)
  */
 export const getCommentList = (bvid, params) => {
   return api.get(`/comments/${bvid}/list`, { params })

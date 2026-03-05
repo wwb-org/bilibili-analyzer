@@ -70,6 +70,14 @@ class Comment(Base):
     video_id = Column(BigInteger, index=True, nullable=False)
     content = Column(Text, nullable=False)
     user_name = Column(String(100))
+    commenter_mid = Column(BigInteger, index=True)
+    commenter_level = Column(Integer, index=True)
+    commenter_sex = Column(String(16))
+    commenter_vip_type = Column(Integer, index=True)
+    commenter_is_official = Column(Boolean, default=False, index=True)
+    reply_count = Column(Integer, default=0)
+    up_replied = Column(Boolean, default=False)
+    comment_ctime = Column(DateTime, index=True)
     sentiment_score = Column(Float)  # 情感分数 0-1
     emotion_label = Column(String(32), index=True)  # GoEmotions 28类主情绪
     emotion_scores_json = Column(JSON)  # GoEmotions 28类情绪概率分布
@@ -80,6 +88,10 @@ class Comment(Base):
 
     __table_args__ = (
         Index("idx_comments_video_emotion", "video_id", "emotion_label"),
+        Index("idx_comments_video_level", "video_id", "commenter_level"),
+        Index("idx_comments_video_vip", "video_id", "commenter_vip_type"),
+        Index("idx_comments_video_official", "video_id", "commenter_is_official"),
+        Index("idx_comments_video_reply", "video_id", "reply_count"),
     )
 
 

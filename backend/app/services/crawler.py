@@ -4,7 +4,7 @@ B站数据采集服务
 import time
 import random
 import requests
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from functools import wraps
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -13,6 +13,15 @@ from sqlalchemy.exc import IntegrityError
 from app.models.models import Video, Comment
 from app.core.database import SessionLocal
 from app.services.emotion import EmotionAnalyzer
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class BilibiliCrawler:
@@ -101,6 +110,60 @@ class BilibiliCrawler:
         except Exception as e:
             print(f"获取评论失败: {e}")
             return None
+
+    @rate_limit(interval=2.0)
+    def get_video_comments_main(
+        self,
+        oid: int,
+        next_cursor: int = 0,
+        page_size: int = 20,
+        mode: int = 3
+    ) -> Optional[Dict]:
+        """获取视频评论（新版主评论接口）"""
+        url = f"{self.BASE_URL}/x/v2/reply/main"
+        params = {
+            "type": 1,
+            "oid": oid,
+            "mode": mode,
+            "next": next_cursor,
+            "ps": page_size,
+        }
+
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+            data = resp.json()
+            if data.get("code") == 0:
+                return data.get("data") or {}
+            return None
+        except Exception as e:
+            print(f"获取评论(main)失败: {e}")
+            return None
+
+    @staticmethod
+    def parse_comment_user_profile(comment_raw: Dict) -> Dict:
+        """从评论原始数据提取用户画像字段"""
+        member = comment_raw.get("member") or {}
+        level_info = member.get("level_info") or {}
+        vip_info = member.get("vip") or {}
+        official = member.get("official_verify") or {}
+        up_action = comment_raw.get("up_action") or {}
+        raw_sex = (member.get("sex") or "").strip()
+        if raw_sex not in {"男", "女"}:
+            raw_sex = "未知"
+
+        ctime = _to_int(comment_raw.get("ctime"), 0)
+        comment_ctime = datetime.fromtimestamp(ctime) if ctime > 0 else None
+
+        return {
+            "commenter_mid": _to_int(member.get("mid"), 0) or None,
+            "commenter_level": _to_int(level_info.get("current_level"), 0) or None,
+            "commenter_sex": raw_sex,
+            "commenter_vip_type": _to_int(vip_info.get("vipType"), 0),
+            "commenter_is_official": _to_int(official.get("type"), -1) >= 0,
+            "reply_count": _to_int(comment_raw.get("rcount"), 0),
+            "up_replied": bool(up_action.get("reply")),
+            "comment_ctime": comment_ctime,
+        }
 
     @rate_limit(interval=2.0)
     def get_video_danmakus(self, cid: int, max_count: int = 500) -> Optional[List[Dict]]:
@@ -283,6 +346,7 @@ class BilibiliCrawler:
 
                 # 细粒度情绪分析 + 三分类兼容分数
                 emotion_result = self.emotion.analyze_emotion(content)
+                profile = self.parse_comment_user_profile(comment_raw)
 
                 # 创建评论记录
                 comment = Comment(
@@ -290,12 +354,20 @@ class BilibiliCrawler:
                     video_id=video_id,
                     content=content,
                     user_name=user_name,
+                    commenter_mid=profile["commenter_mid"],
+                    commenter_level=profile["commenter_level"],
+                    commenter_sex=profile["commenter_sex"],
+                    commenter_vip_type=profile["commenter_vip_type"],
+                    commenter_is_official=profile["commenter_is_official"],
                     sentiment_score=emotion_result.sentiment_score,
                     emotion_label=emotion_result.emotion_label,
                     emotion_scores_json=emotion_result.emotion_scores,
                     emotion_model_version=emotion_result.model_version,
                     emotion_analyzed_at=emotion_result.analyzed_at,
-                    like_count=like_count
+                    like_count=like_count,
+                    reply_count=profile["reply_count"],
+                    up_replied=profile["up_replied"],
+                    comment_ctime=profile["comment_ctime"],
                 )
                 db.add(comment)
                 saved_count += 1

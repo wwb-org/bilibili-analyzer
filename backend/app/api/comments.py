@@ -105,6 +105,161 @@ def build_emotion_distribution(comments: List[Comment], total_count: int) -> Dic
     return {"counts": counts, "rates": rates, "dominant": dominant}
 
 
+def normalize_commenter_sex(sex: Optional[str]) -> str:
+    val = (sex or "").strip()
+    if val in {"男", "女"}:
+        return val
+    return "未知"
+
+
+def normalize_vip_type(vip_type: Optional[int]) -> int:
+    if vip_type in (0, 1, 2):
+        return int(vip_type)
+    return 0
+
+
+def build_distribution_items(counter: Counter, total: int, ordered_keys: Optional[List[str]] = None) -> List[Dict]:
+    keys = ordered_keys or list(counter.keys())
+    items = []
+    for key in keys:
+        count = int(counter.get(key, 0))
+        if count <= 0:
+            continue
+        items.append({
+            "label": key,
+            "count": count,
+            "rate": round(count / total * 100, 1) if total else 0.0,
+        })
+    return items
+
+
+def build_audience_profile_data(comments: List[Comment]) -> Dict:
+    user_map: Dict[str, Dict] = {}
+    for comment in comments:
+        if comment.commenter_mid:
+            user_key = f"mid:{comment.commenter_mid}"
+        elif comment.user_name:
+            user_key = f"name:{comment.user_name}"
+        else:
+            user_key = f"comment:{comment.id}"
+
+        if user_key not in user_map:
+            user_map[user_key] = {
+                "mid": comment.commenter_mid,
+                "user_name": comment.user_name or "匿名用户",
+                "level": comment.commenter_level,
+                "vip_type": normalize_vip_type(comment.commenter_vip_type),
+                "sex": normalize_commenter_sex(comment.commenter_sex),
+                "is_official": bool(comment.commenter_is_official),
+                "comment_count": 0,
+                "like_total": 0,
+                "max_reply_count": 0,
+            }
+
+        item = user_map[user_key]
+        item["comment_count"] += 1
+        item["like_total"] += int(comment.like_count or 0)
+        item["max_reply_count"] = max(item["max_reply_count"], int(comment.reply_count or 0))
+        if not item["user_name"] and comment.user_name:
+            item["user_name"] = comment.user_name
+        if item["level"] is None and comment.commenter_level is not None:
+            item["level"] = comment.commenter_level
+
+    total_commenters = len(user_map)
+    total_comments = len(comments)
+    if total_commenters == 0:
+        return {
+            "summary": {
+                "total_commenters": 0,
+                "avg_comments_per_user": 0.0,
+                "official_rate": 0.0,
+                "vip_rate": 0.0,
+            },
+            "level_distribution": [],
+            "vip_distribution": [],
+            "official_distribution": [],
+            "sex_distribution": [],
+            "top_commenters": [],
+        }
+
+    level_counter = Counter()
+    vip_counter = Counter()
+    official_counter = Counter()
+    sex_counter = Counter()
+
+    vip_label_map = {
+        0: "普通用户",
+        1: "大会员",
+        2: "年度大会员",
+    }
+
+    user_items = list(user_map.values())
+    for user in user_items:
+        level_key = f"Lv{user['level']}" if user["level"] is not None else "未知等级"
+        vip_key = vip_label_map.get(user["vip_type"], "普通用户")
+        official_key = "认证用户" if user["is_official"] else "未认证用户"
+        sex_key = user["sex"]
+
+        level_counter[level_key] += 1
+        vip_counter[vip_key] += 1
+        official_counter[official_key] += 1
+        sex_counter[sex_key] += 1
+
+    sorted_top = sorted(
+        user_items,
+        key=lambda x: (
+            x["comment_count"],
+            (x["like_total"] / x["comment_count"]) if x["comment_count"] else 0,
+            x["max_reply_count"],
+        ),
+        reverse=True,
+    )
+
+    top_commenters = []
+    for user in sorted_top[:10]:
+        avg_like = round(user["like_total"] / user["comment_count"], 1) if user["comment_count"] else 0.0
+        top_commenters.append({
+            "mid": user["mid"],
+            "user_name": user["user_name"],
+            "comment_count": user["comment_count"],
+            "avg_like_count": avg_like,
+            "max_reply_count": user["max_reply_count"],
+            "level": user["level"],
+            "vip_type": user["vip_type"],
+            "sex": user["sex"],
+            "is_official": user["is_official"],
+        })
+
+    vip_user_count = vip_counter.get("大会员", 0) + vip_counter.get("年度大会员", 0)
+    summary = {
+        "total_commenters": total_commenters,
+        "avg_comments_per_user": round(total_comments / total_commenters, 2),
+        "official_rate": round(official_counter.get("认证用户", 0) / total_commenters * 100, 1),
+        "vip_rate": round(vip_user_count / total_commenters * 100, 1),
+    }
+
+    return {
+        "summary": summary,
+        "level_distribution": build_distribution_items(level_counter, total_commenters),
+        "vip_distribution": build_distribution_items(
+            vip_counter,
+            total_commenters,
+            ordered_keys=["普通用户", "大会员", "年度大会员"],
+        ),
+        "official_distribution": build_distribution_items(
+            official_counter,
+            total_commenters,
+            ordered_keys=["认证用户", "未认证用户"],
+        ),
+        "sex_distribution": build_distribution_items(
+            sex_counter,
+            total_commenters,
+            ordered_keys=["男", "女", "未知"],
+        ),
+        "top_commenters": top_commenters,
+    }
+
+
 # ==================== 响应模型 ====================
 
 class SentimentSummary(BaseModel):
@@ -163,11 +318,19 @@ class CommentItem(BaseModel):
     rpid: Optional[int]
     content: str
     user_name: Optional[str]
+    commenter_mid: Optional[int]
+    commenter_level: Optional[int]
+    commenter_sex: Optional[str]
+    commenter_vip_type: int = 0
+    commenter_is_official: bool = False
     sentiment_score: Optional[float]
     sentiment_label: Optional[str]
     emotion_label: Optional[str]
     emotion_scores: Optional[Dict[str, float]]
     like_count: int
+    reply_count: int = 0
+    up_replied: bool = False
+    comment_ctime: Optional[datetime]
     created_at: Optional[datetime]
 
 
@@ -230,6 +393,44 @@ class CompareRequest(BaseModel):
 class CompareResponse(BaseModel):
     """对比响应"""
     videos: List[CompareVideoItem]
+
+
+class DistributionItem(BaseModel):
+    """画像分布项"""
+    label: str
+    count: int
+    rate: float
+
+
+class AudienceSummary(BaseModel):
+    """用户画像摘要"""
+    total_commenters: int
+    avg_comments_per_user: float
+    official_rate: float
+    vip_rate: float
+
+
+class TopCommenterItem(BaseModel):
+    """活跃评论用户项"""
+    mid: Optional[int]
+    user_name: str
+    comment_count: int
+    avg_like_count: float
+    max_reply_count: int
+    level: Optional[int]
+    vip_type: int
+    sex: str
+    is_official: bool
+
+
+class AudienceProfileResponse(BaseModel):
+    """评论用户画像响应"""
+    summary: AudienceSummary
+    level_distribution: List[DistributionItem]
+    vip_distribution: List[DistributionItem]
+    official_distribution: List[DistributionItem]
+    sex_distribution: List[DistributionItem]
+    top_commenters: List[TopCommenterItem]
 
 
 # ==================== API接口 ====================
@@ -380,6 +581,18 @@ def get_comment_stats(bvid: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/{bvid}/audience-profile", response_model=AudienceProfileResponse)
+def get_comment_audience_profile(bvid: str, db: Session = Depends(get_db)):
+    """获取单视频评论用户画像"""
+    video = db.query(Video).filter(Video.bvid == bvid).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="视频不存在")
+
+    comments = db.query(Comment).filter(Comment.video_id == video.id).all()
+    profile_data = build_audience_profile_data(comments)
+    return AudienceProfileResponse(**profile_data)
+
+
 @router.get("/{bvid}/list", response_model=CommentListResponse)
 def get_comment_list(
     bvid: str,
@@ -387,7 +600,7 @@ def get_comment_list(
     page_size: int = Query(20, ge=1, le=100),
     sentiment: Optional[str] = Query(None, regex="^(positive|neutral|negative)$"),
     emotion: Optional[str] = Query(None, regex=EMOTION_QUERY_REGEX),
-    sort_by: str = Query("like_count", regex="^(like_count|created_at|sentiment_score)$"),
+    sort_by: str = Query("like_count", regex="^(like_count|created_at|comment_ctime|sentiment_score)$"),
     db: Session = Depends(get_db),
 ):
     """获取单视频评论列表（支持筛选和排序）"""
@@ -403,6 +616,8 @@ def get_comment_list(
 
     if sort_by == "sentiment_score":
         query = query.order_by(Comment.sentiment_score.desc())
+    elif sort_by == "comment_ctime":
+        query = query.order_by(Comment.comment_ctime.desc(), Comment.created_at.desc())
     else:
         order_column = getattr(Comment, sort_by)
         query = query.order_by(order_column.desc())
@@ -421,11 +636,19 @@ def get_comment_list(
             rpid=comment.rpid,
             content=comment.content,
             user_name=comment.user_name,
+            commenter_mid=comment.commenter_mid,
+            commenter_level=comment.commenter_level,
+            commenter_sex=comment.commenter_sex,
+            commenter_vip_type=comment.commenter_vip_type or 0,
+            commenter_is_official=bool(comment.commenter_is_official),
             sentiment_score=comment.sentiment_score,
             sentiment_label=get_sentiment_label(comment.sentiment_score),
             emotion_label=comment.emotion_label,
             emotion_scores=top_scores if top_scores else None,
             like_count=comment.like_count or 0,
+            reply_count=comment.reply_count or 0,
+            up_replied=bool(comment.up_replied),
+            comment_ctime=comment.comment_ctime,
             created_at=comment.created_at,
         ))
 
@@ -634,7 +857,7 @@ def export_comments_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["用户名", "评论内容", "情感分数", "情感标签", "主情绪", "点赞数", "评论时间"])
+    writer.writerow(["用户名", "评论内容", "情感分数", "情感标签", "主情绪", "点赞数", "回复数", "用户等级", "VIP类型", "认证用户", "评论时间"])
 
     for comment in comments:
         writer.writerow([
@@ -644,7 +867,12 @@ def export_comments_csv(
             get_sentiment_label(comment.sentiment_score) or "",
             comment.emotion_label or "",
             comment.like_count or 0,
-            comment.created_at.strftime("%Y-%m-%d %H:%M:%S") if comment.created_at else "",
+            comment.reply_count or 0,
+            comment.commenter_level if comment.commenter_level is not None else "",
+            comment.commenter_vip_type if comment.commenter_vip_type is not None else "",
+            "是" if comment.commenter_is_official else "否",
+            (comment.comment_ctime or comment.created_at).strftime("%Y-%m-%d %H:%M:%S")
+            if (comment.comment_ctime or comment.created_at) else "",
         ])
 
     output.seek(0)

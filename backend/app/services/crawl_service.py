@@ -204,10 +204,45 @@ class CrawlService:
         saved_count = 0
         page_size = 20
         total_pages = (max_comments + page_size - 1) // page_size
+        next_cursor = 0
+        use_main_api = True
+        legacy_page = 1
 
         try:
-            for page in range(1, total_pages + 1):
-                comments_raw = self.crawler.get_video_comments(oid, page=page, page_size=page_size)
+            while saved_count < max_comments:
+                comments_raw = None
+
+                if use_main_api:
+                    main_data = self.crawler.get_video_comments_main(
+                        oid,
+                        next_cursor=next_cursor,
+                        page_size=page_size,
+                        mode=3,
+                    )
+                    if main_data and main_data.get("replies"):
+                        comments_raw = main_data.get("replies")
+                        cursor = main_data.get("cursor") or {}
+                        next_value = cursor.get("next")
+                        is_end = bool(cursor.get("is_end"))
+                        if is_end:
+                            next_cursor = None
+                        elif isinstance(next_value, int):
+                            # 防止 next 不推进导致死循环
+                            if next_value == next_cursor:
+                                use_main_api = False
+                            next_cursor = next_value
+                        else:
+                            use_main_api = False
+                    else:
+                        # 新接口异常时降级到旧接口，保证采集不中断
+                        use_main_api = False
+
+                if not use_main_api:
+                    if legacy_page > total_pages:
+                        break
+                    comments_raw = self.crawler.get_video_comments(oid, page=legacy_page, page_size=page_size)
+                    legacy_page += 1
+
                 if not comments_raw:
                     break
 
@@ -229,6 +264,7 @@ class CrawlService:
 
                     # 细粒度情绪分析 + 三分类兼容分数
                     emotion_result = self.crawler.emotion.analyze_emotion(content)
+                    profile = self.crawler.parse_comment_user_profile(comment_raw)
 
                     # 创建评论记录
                     comment = Comment(
@@ -236,12 +272,20 @@ class CrawlService:
                         video_id=video_id,
                         content=content,
                         user_name=user_name,
+                        commenter_mid=profile["commenter_mid"],
+                        commenter_level=profile["commenter_level"],
+                        commenter_sex=profile["commenter_sex"],
+                        commenter_vip_type=profile["commenter_vip_type"],
+                        commenter_is_official=profile["commenter_is_official"],
                         sentiment_score=emotion_result.sentiment_score,
                         emotion_label=emotion_result.emotion_label,
                         emotion_scores_json=emotion_result.emotion_scores,
                         emotion_model_version=emotion_result.model_version,
                         emotion_analyzed_at=emotion_result.analyzed_at,
-                        like_count=like_count
+                        like_count=like_count,
+                        reply_count=profile["reply_count"],
+                        up_replied=profile["up_replied"],
+                        comment_ctime=profile["comment_ctime"],
                     )
                     db.add(comment)
                     saved_count += 1
@@ -251,6 +295,8 @@ class CrawlService:
                         db.commit()
 
                 if saved_count >= max_comments:
+                    break
+                if use_main_api and next_cursor is None:
                     break
 
             # 最后提交剩余的

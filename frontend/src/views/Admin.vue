@@ -154,10 +154,10 @@
                 <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
               </template>
             </el-table-column>
-            <el-table-column label="趋势" width="50" align="center">
+            <el-table-column label="趋势*" width="60" align="center">
               <template #default="{ row }">
                 <el-icon v-if="row.dws_video_trend" color="#67C23A"><CircleCheck /></el-icon>
-                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+                <span v-else class="optional-mark">—</span>
               </template>
             </el-table-column>
             <el-table-column label="热词" width="50" align="center">
@@ -190,6 +190,9 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="overview-tip">
+          * 趋势为可选项：需要多日快照数据，未生成不影响 ETL 完整性。
+        </div>
       </div>
       <el-empty v-else-if="!dataOverviewLoading" description="暂无数据" :image-size="60" />
     </div>
@@ -1721,6 +1724,12 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
+.overview-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+}
+
 .zero-val {
   color: #c0c4cc;
 }
@@ -1728,6 +1737,12 @@ onMounted(() => {
 .done-text {
   font-size: 12px;
   color: #c0c4cc;
+}
+
+.optional-mark {
+  color: #c0c4cc;
+  font-size: 14px;
+  line-height: 1;
 }
 
 :deep(.row-missing) {

@@ -501,10 +501,11 @@ def get_data_overview(
 
         # 判断 ETL 状态
         dwd_done = dwd_snap > 0 or dwd_comm > 0 or dwd_kw > 0
-        dws_done = has_stats and has_category and has_sentiment and has_trend and has_kw_stats
+        # dws_video_trend 依赖多日快照，可能在早期日期为空，按“可选项”处理
+        dws_done = has_stats and has_category and has_sentiment and has_kw_stats
         if dwd_done and dws_done:
             etl_status = "complete"
-        elif dwd_done or has_stats or has_category or has_sentiment or has_trend or has_kw_stats:
+        elif dwd_done or has_stats or has_category or has_sentiment or has_kw_stats:
             etl_status = "partial"
         else:
             etl_status = "missing"

@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="header-left">
         <h2 class="page-title">评论分析</h2>
-        <span class="page-desc">选择视频，深度分析评论区情感与热词</span>
+        <span class="page-desc">选择视频，分析评论区情感、热词与用户画像</span>
       </div>
       <div class="header-right">
         <el-radio-group v-model="analysisMode" size="small">
@@ -182,6 +182,72 @@
             </div>
           </div>
 
+          <!-- 用户画像 -->
+          <div class="section-card" v-if="audienceProfile">
+            <div class="section-header">
+              <span class="section-title">用户画像</span>
+            </div>
+            <div class="profile-summary">
+              <div class="summary-item">
+                <div class="summary-value">{{ audienceProfile.summary?.total_commenters || 0 }}</div>
+                <div class="summary-label">评论用户数</div>
+              </div>
+              <div class="summary-item">
+                <div class="summary-value">{{ audienceProfile.summary?.avg_comments_per_user || 0 }}</div>
+                <div class="summary-label">人均评论</div>
+              </div>
+              <div class="summary-item">
+                <div class="summary-value">{{ audienceProfile.summary?.official_rate || 0 }}%</div>
+                <div class="summary-label">认证占比</div>
+              </div>
+              <div class="summary-item">
+                <div class="summary-value">{{ audienceProfile.summary?.vip_rate || 0 }}%</div>
+                <div class="summary-label">会员占比</div>
+              </div>
+            </div>
+            <div class="profile-grid">
+              <div class="profile-chart">
+                <div class="chart-title chart-title--small">等级分布</div>
+                <div ref="levelChartRef" class="chart-container"></div>
+              </div>
+              <div class="profile-chart">
+                <div class="chart-title chart-title--small">VIP分布</div>
+                <div ref="vipChartRef" class="chart-container"></div>
+              </div>
+              <div class="profile-chart">
+                <div class="chart-title chart-title--small">认证分布</div>
+                <div ref="officialChartRef" class="chart-container"></div>
+              </div>
+              <div class="profile-chart">
+                <div class="chart-title chart-title--small">性别分布</div>
+                <div ref="sexChartRef" class="chart-container"></div>
+              </div>
+            </div>
+            <div class="profile-top-table">
+              <el-table :data="audienceProfile.top_commenters || []" stripe size="small">
+                <el-table-column prop="user_name" label="用户" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="comment_count" label="评论数" width="80" />
+                <el-table-column prop="avg_like_count" label="平均赞" width="90" />
+                <el-table-column prop="max_reply_count" label="最高回复" width="90" />
+                <el-table-column label="等级" width="70">
+                  <template #default="{ row }">
+                    {{ row.level != null ? `Lv${row.level}` : '未知' }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="VIP" width="90">
+                  <template #default="{ row }">
+                    {{ getVipTypeText(row.vip_type) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="认证" width="70">
+                  <template #default="{ row }">
+                    {{ row.is_official ? '是' : '否' }}
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
+
           <!-- 图表区域 -->
           <div class="charts-row">
             <div class="chart-card">
@@ -237,6 +303,7 @@
                 </el-select>
                 <el-select v-model="commentSortBy" size="small" @change="loadCommentList">
                   <el-option label="点赞最多" value="like_count" />
+                  <el-option label="评论发布时间" value="comment_ctime" />
                   <el-option label="最新发布" value="created_at" />
                 </el-select>
               </div>
@@ -245,6 +312,13 @@
               <div v-for="comment in commentList" :key="comment.id" class="comment-item">
                 <div class="comment-header">
                   <span class="user-name">{{ comment.user_name }}</span>
+                  <el-tag v-if="comment.commenter_level !== null && comment.commenter_level !== undefined" size="small" type="info">
+                    Lv{{ comment.commenter_level }}
+                  </el-tag>
+                  <el-tag v-if="comment.commenter_vip_type > 0" size="small" type="warning">
+                    {{ getVipTypeText(comment.commenter_vip_type) }}
+                  </el-tag>
+                  <el-tag v-if="comment.commenter_is_official" size="small" type="success">认证</el-tag>
                   <el-tag :type="getCommentTagType(comment)" size="small">
                     {{ getCommentTagText(comment) }}
                   </el-tag>
@@ -252,7 +326,8 @@
                 <div class="comment-body">{{ comment.content }}</div>
                 <div class="comment-footer">
                   <span class="likes">{{ comment.like_count }} 赞</span>
-                  <span class="time">{{ formatTime(comment.created_at) }}</span>
+                  <span class="reply-count">{{ comment.reply_count || 0 }} 回复</span>
+                  <span class="time">{{ formatTime(comment.comment_ctime || comment.created_at) }}</span>
                 </div>
               </div>
               <el-empty v-if="!loadingComments && commentList.length === 0" description="暂无评论" :image-size="60" />
@@ -351,6 +426,7 @@ import 'echarts-wordcloud'
 import {
   getVideosWithComments,
   getCommentStats,
+  getCommentAudienceProfile,
   getCommentList,
   getCommentWordcloud,
   getTopComments,
@@ -377,6 +453,7 @@ const loadingVideos = ref(false)
 const selectedVideo = ref(null)
 const analyzing = ref(false)
 const commentStats = ref(null)
+const audienceProfile = ref(null)
 const topComments = ref([])
 const wordcloudData = ref([])
 
@@ -443,11 +520,19 @@ const compareResult = ref(null)
 const pieChartRef = ref(null)
 const wordcloudChartRef = ref(null)
 const emotionBarChartRef = ref(null)
+const levelChartRef = ref(null)
+const vipChartRef = ref(null)
+const officialChartRef = ref(null)
+const sexChartRef = ref(null)
 const compareBarChartRef = ref(null)
 const compareRadarChartRef = ref(null)
 let pieChart = null
 let wordcloudChart = null
 let emotionBarChart = null
+let levelChart = null
+let vipChart = null
+let officialChart = null
+let sexChart = null
 let compareBarChart = null
 let compareRadarChart = null
 
@@ -529,6 +614,7 @@ const analyzeVideo = async (video) => {
   selectedVideo.value = video
   analyzing.value = true
   commentStats.value = null
+  audienceProfile.value = null
   topComments.value = []
   wordcloudData.value = []
   commentList.value = []
@@ -539,12 +625,14 @@ const analyzeVideo = async (video) => {
   disposeCharts()
 
   try {
-    const [statsRes, topRes] = await Promise.all([
+    const [statsRes, profileRes, topRes] = await Promise.all([
       getCommentStats(video.bvid),
+      getCommentAudienceProfile(video.bvid),
       getTopComments(video.bvid, 10)
     ])
 
     commentStats.value = statsRes
+    audienceProfile.value = profileRes
     topComments.value = topRes.items || []
     await loadWordcloud()
 
@@ -553,6 +641,7 @@ const analyzeVideo = async (video) => {
     renderPieChart()
     renderWordcloudChart()
     renderEmotionBarChart()
+    renderAudienceProfileCharts()
 
     await loadCommentList()
   } catch (e) {
@@ -646,11 +735,19 @@ const disposeCharts = () => {
   pieChart?.dispose()
   wordcloudChart?.dispose()
   emotionBarChart?.dispose()
+  levelChart?.dispose()
+  vipChart?.dispose()
+  officialChart?.dispose()
+  sexChart?.dispose()
   compareBarChart?.dispose()
   compareRadarChart?.dispose()
   pieChart = null
   wordcloudChart = null
   emotionBarChart = null
+  levelChart = null
+  vipChart = null
+  officialChart = null
+  sexChart = null
   compareBarChart = null
   compareRadarChart = null
 }
@@ -778,6 +875,73 @@ const renderEmotionBarChart = () => {
   })
 }
 
+const mapDistributionData = (items) => {
+  return (items || []).map(item => ({
+    name: item.label,
+    value: item.count
+  }))
+}
+
+const renderAudienceProfileCharts = () => {
+  if (!audienceProfile.value) return
+
+  if (levelChartRef.value) {
+    levelChart = echarts.init(levelChartRef.value)
+    const levelData = audienceProfile.value.level_distribution || []
+    levelChart.setOption({
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: '3%', right: '3%', bottom: '3%', top: '8%', containLabel: true },
+      xAxis: { type: 'category', data: levelData.map(item => item.label), axisLabel: { fontSize: 11 } },
+      yAxis: { type: 'value', name: '用户数' },
+      series: [{
+        type: 'bar',
+        data: levelData.map(item => item.count),
+        itemStyle: { color: '#00A1D6' },
+        barMaxWidth: 24
+      }]
+    })
+  }
+
+  if (vipChartRef.value) {
+    vipChart = echarts.init(vipChartRef.value)
+    vipChart.setOption({
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      series: [{
+        type: 'pie',
+        radius: ['35%', '70%'],
+        label: { fontSize: 11 },
+        data: mapDistributionData(audienceProfile.value.vip_distribution)
+      }]
+    })
+  }
+
+  if (officialChartRef.value) {
+    officialChart = echarts.init(officialChartRef.value)
+    officialChart.setOption({
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      series: [{
+        type: 'pie',
+        radius: ['35%', '70%'],
+        label: { fontSize: 11 },
+        data: mapDistributionData(audienceProfile.value.official_distribution)
+      }]
+    })
+  }
+
+  if (sexChartRef.value) {
+    sexChart = echarts.init(sexChartRef.value)
+    sexChart.setOption({
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      series: [{
+        type: 'pie',
+        radius: ['35%', '70%'],
+        label: { fontSize: 11 },
+        data: mapDistributionData(audienceProfile.value.sex_distribution)
+      }]
+    })
+  }
+}
+
 const renderCompareBarChart = () => {
   if (!compareBarChartRef.value || !compareResult.value) return
   compareBarChart = echarts.init(compareBarChartRef.value)
@@ -863,6 +1027,11 @@ const getCommentTagText = (comment) => {
   return getSentimentSimpleText(comment?.sentiment_label)
 }
 
+const getVipTypeText = (vipType) => {
+  const map = { 0: '普通', 1: '大会员', 2: '年度会员' }
+  return map[vipType] || '普通'
+}
+
 const formatTime = (time) => {
   if (!time) return ''
   return new Date(time).toLocaleString('zh-CN')
@@ -872,6 +1041,10 @@ const handleResize = () => {
   pieChart?.resize()
   wordcloudChart?.resize()
   emotionBarChart?.resize()
+  levelChart?.resize()
+  vipChart?.resize()
+  officialChart?.resize()
+  sexChart?.resize()
   compareBarChart?.resize()
   compareRadarChart?.resize()
 }
@@ -884,6 +1057,7 @@ watch(analysisMode, (newMode) => {
   } else {
     selectedVideo.value = null
     commentStats.value = null
+    audienceProfile.value = null
   }
   disposeCharts()
 })
@@ -1187,6 +1361,48 @@ onUnmounted(() => {
   margin-top: 8px;
 }
 
+.profile-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.summary-item {
+  background: var(--bg-gray-light);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+}
+
+.summary-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.summary-label {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.profile-chart {
+  background: var(--bg-gray-light);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.profile-top-table {
+  margin-top: 12px;
+}
+
 .charts-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1214,6 +1430,11 @@ onUnmounted(() => {
   padding-left: 8px;
   border-left: 4px solid var(--bili-blue);
   line-height: 1;
+}
+
+.chart-title--small {
+  font-size: 13px;
+  margin-bottom: 10px;
 }
 
 .chart-container {
@@ -1394,7 +1615,9 @@ onUnmounted(() => {
 
 @media (max-width: 1200px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .profile-summary { grid-template-columns: repeat(2, 1fr); }
   .charts-row { grid-template-columns: 1fr; }
+  .profile-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 900px) {
