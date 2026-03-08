@@ -4,8 +4,8 @@
     <div class="left-section">
       <div class="brand-info">
         <img src="@/bilibili.svg" alt="Logo" class="brand-logo" />
-        <h1 class="brand-title">B站视频趋势分析系统</h1>
-        <p class="brand-desc">基于大数据的视频内容趋势分析平台</p>
+        <h1 class="brand-title">B站视频分析系统</h1>
+        <p class="brand-desc">基于大数据的视频分析平台</p>
       </div>
     </div>
 

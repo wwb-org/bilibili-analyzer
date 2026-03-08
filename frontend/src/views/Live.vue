@@ -40,6 +40,51 @@
       </div>
     </div>
 
+    <!-- 热门直播间 -->
+    <div class="popular-panel">
+      <div class="popular-header" @click="popularExpanded = !popularExpanded">
+        <h3 class="panel-title">
+          <el-icon><Promotion /></el-icon>
+          热门直播间
+        </h3>
+        <div class="popular-actions">
+          <el-button size="small" text @click.stop="loadPopularRooms" :loading="popularLoading">
+            <el-icon><Refresh /></el-icon>
+          </el-button>
+          <el-icon class="expand-arrow" :class="{ 'is-expanded': popularExpanded }">
+            <ArrowDown />
+          </el-icon>
+        </div>
+      </div>
+      <div v-show="popularExpanded" class="popular-body">
+        <div v-if="popularLoading && popularRooms.length === 0" class="popular-loading">
+          加载中...
+        </div>
+        <div v-else-if="popularRooms.length === 0" class="popular-empty">
+          暂无数据
+        </div>
+        <div v-else class="popular-grid">
+          <div
+            v-for="room in popularRooms"
+            :key="room.room_id"
+            class="popular-room-card"
+            @click="quickAddRoom(room.room_id)"
+          >
+            <img :src="room.face" class="room-avatar" />
+            <div class="room-info">
+              <div class="room-title-text">{{ room.title }}</div>
+              <div class="room-meta">
+                <span class="room-uname">{{ room.uname }}</span>
+                <span class="room-online">{{ formatOnline(room.online) }}在线</span>
+              </div>
+              <div class="room-area" v-if="room.area_name">{{ room.area_name }}</div>
+            </div>
+            <div class="room-id-badge">{{ room.room_id }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 房间标签页 -->
     <div class="room-tabs" v-if="rooms.length > 0">
       <div
@@ -223,18 +268,24 @@
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Monitor, ChatLineRound, Timer, Sunny, Present, Close, DataAnalysis
+  Monitor, ChatLineRound, Timer, Sunny, Present, Close, DataAnalysis,
+  Promotion, Refresh, ArrowDown
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import 'echarts-wordcloud'
 import LiveWebSocket from '@/utils/websocket'
-import { getServicesStatus } from '@/api/live'
+import { getServicesStatus, getPopularRooms } from '@/api/live'
 
 // ========== 状态管理 ==========
 const newRoomId = ref('')
 const activeRoom = ref('global')
 const kafkaStatus = ref(false)
 const bilibiliLoggedIn = ref(false)
+
+// 热门直播间
+const popularRooms = ref([])
+const popularExpanded = ref(true)
+const popularLoading = ref(false)
 
 // 房间数据结构
 const rooms = ref([])
@@ -314,6 +365,28 @@ const addRoom = async () => {
   // 初始化图表
   await nextTick()
   initRoomCharts()
+}
+
+const quickAddRoom = (roomId) => {
+  newRoomId.value = String(roomId)
+  addRoom()
+}
+
+const loadPopularRooms = async () => {
+  popularLoading.value = true
+  try {
+    const res = await getPopularRooms()
+    popularRooms.value = res.rooms || []
+  } catch {
+    popularRooms.value = []
+  } finally {
+    popularLoading.value = false
+  }
+}
+
+const formatOnline = (num) => {
+  if (num >= 10000) return (num / 10000).toFixed(1) + '万'
+  return String(num)
 }
 
 const removeRoom = (roomId) => {
@@ -671,6 +744,7 @@ const checkServicesStatus = async () => {
 // ========== 生命周期 ==========
 onMounted(() => {
   checkServicesStatus()
+  loadPopularRooms()
   window.addEventListener('resize', handleResize)
 })
 
@@ -1069,6 +1143,137 @@ watch(activeRoom, (newVal) => {
   flex: 1;
   width: 100%;
   min-height: 0;
+}
+
+/* 热门直播间面板 */
+.popular-panel {
+  background: var(--bg-white);
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.popular-header {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.popular-header:hover {
+  background: var(--bg-gray-light);
+}
+
+.popular-header .panel-title {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.popular-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.expand-arrow {
+  transition: transform 0.2s;
+}
+
+.expand-arrow.is-expanded {
+  transform: rotate(180deg);
+}
+
+.popular-body {
+  padding: 0 20px 16px;
+}
+
+.popular-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.popular-room-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-gray-light);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.popular-room-card:hover {
+  background: var(--bg-gray);
+}
+
+.room-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.room-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.room-title-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.room-uname {
+  color: var(--text-regular);
+}
+
+.room-online {
+  color: var(--bili-blue);
+}
+
+.room-area {
+  font-size: 11px;
+  color: var(--text-placeholder);
+  margin-top: 2px;
+}
+
+.room-id-badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-gray);
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.popular-loading,
+.popular-empty {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .empty-state {

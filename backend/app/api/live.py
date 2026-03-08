@@ -530,6 +530,65 @@ async def get_room_ranking():
     }
 
 
+# ==================== 热门直播间 ====================
+
+_popular_cache = None
+_popular_cache_time = 0
+_POPULAR_CACHE_TTL = 300  # 5分钟缓存
+
+
+@router.get("/popular")
+async def get_popular_rooms():
+    """获取B站热门直播间列表"""
+    import time
+    import requests
+
+    global _popular_cache, _popular_cache_time
+
+    now = time.time()
+    if _popular_cache and (now - _popular_cache_time) < _POPULAR_CACHE_TTL:
+        return {"rooms": _popular_cache, "total": len(_popular_cache), "cached": True}
+
+    try:
+        url = "https://api.live.bilibili.com/xlive/web-interface/v1/webMain/getList"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://live.bilibili.com/",
+        }
+        resp = await asyncio.to_thread(
+            requests.get, url, params={"platform": "web"}, headers=headers, timeout=10
+        )
+        data = resp.json().get("data", {})
+
+        seen = set()
+        rooms = []
+        for room in data.get("recommend_room_list", []) + data.get("ranking_list", []):
+            rid = room.get("roomid")
+            if not rid or rid in seen:
+                continue
+            seen.add(rid)
+            rooms.append({
+                "room_id": rid,
+                "title": room.get("title", ""),
+                "uname": room.get("uname", ""),
+                "online": room.get("online", 0),
+                "face": room.get("face", ""),
+                "cover": room.get("cover", ""),
+                "area_name": room.get("area_v2_name") or room.get("area_v2_parent_name", ""),
+                "watched_text": (room.get("watched_show") or {}).get("text_small", ""),
+            })
+
+        rooms.sort(key=lambda r: r["online"], reverse=True)
+
+        _popular_cache = rooms
+        _popular_cache_time = now
+
+        return {"rooms": rooms, "total": len(rooms), "cached": False}
+    except Exception as e:
+        logging.warning(f"获取热门直播间失败: {e}")
+        return {"rooms": [], "total": 0, "error": str(e)}
+
+
 @router.get("/status/services")
 async def get_services_status():
     """获取后端服务状态（Kafka、Redis、B站登录）"""

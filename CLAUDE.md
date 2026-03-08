@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**项目名称**：基于Spark Streaming的B站视频内容趋势分析系统
+**项目名称**：基于大数据的B站视频分析系统
 
 **项目类型**：大数据专业毕业设计
 

@@ -43,6 +43,11 @@
             <el-icon><TrendCharts /></el-icon>
             <span>智能预测</span>
           </el-menu-item>
+
+          <el-menu-item index="/content-planner">
+            <el-icon><Promotion /></el-icon>
+            <span>内容策划</span>
+          </el-menu-item>
           
           <el-menu-item index="/admin" v-if="userStore.user?.role === 'admin'">
             <el-icon><Setting /></el-icon>
@@ -90,9 +95,9 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { 
-  DataLine, VideoPlay, ChatDotRound, PriceTag, 
-  Microphone, TrendCharts, Setting, CaretBottom 
+import {
+  DataLine, VideoPlay, ChatDotRound, PriceTag,
+  Microphone, TrendCharts, Setting, CaretBottom, Promotion
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
