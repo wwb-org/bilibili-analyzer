@@ -23,6 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **已实现特色**：
 - XGBoost热度预测 + TF-IDF内容推荐
+- 内容策划助手（爆款特征分析 + 标题评分 + 智能建议）
 
 ---
 
@@ -157,7 +158,7 @@ bilibili-analyzer/
 
 ---
 
-## 前端页面说明（共10个）
+## 前端页面说明（共11个）
 
 ### 页面总览
 
@@ -171,8 +172,9 @@ bilibili-analyzer/
 | 6 | 热词分析 | Keywords.vue | 用户 | 全局热词聚合分析 |
 | 7 | 直播分析 | Live.vue | 用户 | **实时弹幕分析（亮点）** |
 | 8 | ML预测 | Prediction.vue | 用户 | 热度预测、相似推荐 |
-| 9 | 管理后台 | Admin.vue | 管理员 | 用户管理、采集控制 |
-| 10 | 个人中心 | Profile.vue | 用户 | 个人信息、修改密码 |
+| 9 | 内容策划 | ContentPlanner.vue | 用户 | **爆款特征分析 + 标题评分（亮点）** |
+| 10 | 管理后台 | Admin.vue | 管理员 | 用户管理、采集控制 |
+| 11 | 个人中心 | Profile.vue | 用户 | 个人信息、修改密码 |
 
 ### 核心页面说明
 
@@ -215,6 +217,13 @@ bilibili-analyzer/
 - 热度预测：7天后播放量、增长率、热度等级、特征重要性图表
 - 相似推荐：TOP10相似视频（可点击继续分析）
 - 支持手动输入 BV 号（折叠面板）
+
+#### 内容策划 (ContentPlanner.vue)
+- **分区选择**：下拉选择视频分区，点击"开始分析"触发全量分析
+- **爆款特征卡片**：爆款门槛（P90播放量）、最优标题长度（P25~P75区间）、爆款互动率 vs 普通互动率对比、最佳发布时段（TOP3小时）、最佳发布星期（TOP2）、24小时发布分布柱状图（高亮最优时段）
+- **爆款关键词卡片**：词云展示（按热度分级着色 hot/warm/cool）、趋势标记（↑上升/↓下降）、点击词语自动插入标题评分输入框
+- **标题建议卡片**：基于爆款模式自动生成5条标题建议，每条含模式标签（数量型/疑问型/教程型/对比型/情感型）和命中率、"换一批"按钮重新生成
+- **标题评分卡片**：输入标题实时三维度评分（关键词热度40分 + 标题长度30分 + 结构模式30分）、圆形进度条展示总分、命中词和模式标签、具体改进建议
 
 #### 管理员后台 (Admin.vue)
 - 用户管理：列表、启用/禁用、修改角色
@@ -276,6 +285,30 @@ GET  /export              # 导出热词数据（CSV/JSON）
 POST /predict      # 视频热度预测
 GET  /recommend/{bvid}  # 相似视频推荐
 ```
+
+### 内容策划 (/api/content-planner)
+```
+GET  /categories          # 获取有数据的分区列表（无需认证）
+GET  /category-analysis   # 分析分区爆款特征（需认证，?category=游戏）
+GET  /keywords            # 获取分区爆款关键词（需认证，?category=&top_k=20）
+GET  /title-suggestions   # 生成标题建议（需认证，?category=&num=5）
+POST /score-title         # 标题三维度评分（需认证，body: {title, category}）
+```
+
+**`/category-analysis` 返回字段：**
+- `viral_threshold`：爆款播放量门槛（P90分位数）
+- `title_length`：标题长度分布（all/viral 各含 avg/p25/p75）
+- `best_publish_hours`：最佳发布小时 TOP3
+- `best_publish_weekdays`：最佳发布星期 TOP2
+- `hour_distribution`：24小时发布频次分布（供前端柱状图渲染）
+- `interaction_rate`：互动率对比（all_avg vs viral_avg）
+
+**`/score-title` 返回字段：**
+- `total_score`（0-100）= `keyword_score`(0-40) + `length_score`(0-30) + `structure_score`(0-30)
+- `matched_keywords`：命中热词列表
+- `matched_patterns`：命中结构模式列表（数量型/疑问型/教程型/对比型/情感型）
+- `optimal_length`：最优标题长度区间 {min, max, avg}
+- `suggestions`：改进建议文字列表
 
 ### 直播分析 (/api/live)
 ```
@@ -833,7 +866,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（8/10 完成）
+### 前端页面（9/10 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
 - [x] Home.vue - 首页仪表盘（基础结构）
@@ -842,8 +875,37 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Keywords.vue - 热词分析（完整实现：多源融合、词云交互、排行榜、详情面板、对比分析、导出）
 - [x] Live.vue - 直播弹幕分析（完整实现）
 - [x] Prediction.vue - ML预测（完整实现）
+- [x] ContentPlanner.vue - 内容策划助手（完整实现）
 - [x] Admin.vue - 管理员后台（完整实现）
 - [ ] Profile.vue - 个人中心（未实现）
+
+**ContentPlanner.vue 功能详情：**
+
+*爆款特征分析（已完成）：*
+- [x] 分区爆款门槛（P90播放量分位数）
+- [x] 爆款视频标题长度分布（P25/P75/均值），与全体视频对比
+- [x] 最佳发布时段（TOP3小时 + TOP2星期）
+- [x] 24小时发布分布柱状图（高亮最优时段）
+- [x] 爆款互动率 vs 普通互动率对比
+
+*爆款关键词（已完成）：*
+- [x] 优先从 DWS 数仓层（dws_keyword_stats）查询，备选 TF-IDF 提取
+- [x] 热度分级着色（hot/warm/cool）
+- [x] 频次趋势标记（↑上升/↓下降）
+- [x] 点击词语自动插入标题评分框
+
+*标题建议生成（已完成）：*
+- [x] 5种爆款结构模式（数量型/疑问型/教程型/对比型/情感型）
+- [x] 基于模板 + 热词随机组合填充
+- [x] 每条建议显示模式标签和爆款命中率
+- [x] "换一批"重新生成
+
+*标题三维度评分（已完成）：*
+- [x] 关键词热度分（0-40分）：分词后匹配热词表，按平均热度转换
+- [x] 标题长度分（0-30分）：P25~P75区间满分，超出按高斯衰减
+- [x] 结构模式分（0-30分）：每命中一种模式+15分，上限30分
+- [x] 圆形进度条展示总分（≥80绿/≥60橙/<60红）
+- [x] 命中热词、命中结构、改进建议列表输出
 
 **Admin.vue 功能详情：**
 
@@ -903,6 +965,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] WebSocket工具类 (utils/websocket.js - 连接管理、事件分发、自动重连)
 - [x] 视频API封装 (videos.js - 列表、详情、统计、分析、对比、分区列表)
 - [x] ML API封装 (ml.js - 热度预测、相似推荐、模型训练)
+- [x] 内容策划 API封装 (content_planner.js - 分区分析、关键词、标题建议、评分)
 - [x] 状态管理 (Pinia user store)
 - [x] 公共组件 (Layout)
 - [x] Vite配置（WebSocket代理支持）
@@ -921,6 +984,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 定时采集任务调度 (tasks/scheduler.py)
 - [x] 管理员采集控制接口（/crawl/start 完整实现，/crawl/status 已实现）
 - [x] 机器学习模块（热度预测 + 相似推荐）
+- [x] 内容策划API（爆款特征分析 + 关键词推荐 + 标题建议 + 三维度评分）
 - [ ] 数据导出功能（未实现）
 - [ ] 直播数据持久化存储（可选扩展）
 
@@ -953,6 +1017,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 3. **多维度分析**：播放量、互动率、情感等多指标综合分析
 4. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
 5. **机器学习预测**：XGBoost热度预测 + TF-IDF多维度相似推荐
+6. **内容策划助手**：基于历史爆款数据的统计分析，结合正则模式识别的标题三维度评分系统
 
 ### 待实现的创新点
 - Kafka + Spark Streaming 实时流处理

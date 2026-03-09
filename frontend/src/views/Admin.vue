@@ -341,6 +341,68 @@ BV1zz4y1c7mZ
               </el-form>
             </div>
           </el-tab-pane>
+
+          <!-- Tab 3: 每周必看采集 -->
+          <el-tab-pane label="每周必看采集" name="weekly">
+            <div class="weekly-crawl-section">
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-bottom: 16px"
+              >
+                <template #title>
+                  B站每周必看共 200+ 期，每期约 20 个视频。<br>
+                  <b>首次使用</b>：选"全部期数 + 仅视频数据"，一次性入库 4000+ 条历史数据（约 2-3 小时）。<br>
+                  <b>日常更新</b>：每周选"最新 1 期"补充最新一期即可。
+                </template>
+              </el-alert>
+
+              <el-form :inline="true" :model="weeklyCrawlForm" class="crawl-config">
+                <el-form-item label="采集范围">
+                  <el-select v-model="weeklyCrawlForm.mode" style="width: 140px">
+                    <el-option label="全部期数" value="all" />
+                    <el-option label="最新 N 期" value="latest" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="期数" v-if="weeklyCrawlForm.mode === 'latest'">
+                  <el-input-number
+                    v-model="weeklyCrawlForm.max_episodes"
+                    :min="1"
+                    :max="300"
+                    :step="1"
+                    controls-position="right"
+                    style="width: 110px"
+                  />
+                </el-form-item>
+                <el-form-item label="每视频评论数">
+                  <el-select v-model="weeklyCrawlForm.comments_per_video" style="width: 130px">
+                    <el-option label="不采评论（最快）" :value="0" />
+                    <el-option label="20 条" :value="20" />
+                    <el-option label="50 条" :value="50" />
+                    <el-option label="100 条" :value="100" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button
+                    type="primary"
+                    :loading="weeklyCrawlLoading"
+                    @click="handleStartWeeklyCrawl"
+                  >
+                    <el-icon><VideoPlay /></el-icon>
+                    开始采集
+                  </el-button>
+                </el-form-item>
+              </el-form>
+
+              <el-text type="info" size="small" v-if="weeklyCrawlForm.mode === 'all'">
+                预计入库 4000+ 个视频，耗时 2-3 小时（后台运行，可关闭页面）
+              </el-text>
+              <el-text type="info" size="small" v-else>
+                预计入库约 {{ weeklyCrawlForm.max_episodes * 20 }} 个视频
+              </el-text>
+            </div>
+          </el-tab-pane>
         </el-tabs>
 
         <!-- 采集日志表格 -->
@@ -708,6 +770,7 @@ import {
   getCrawlLogs,
   startCrawl,
   startBatchCrawl,
+  startWeeklyCrawl,
   getETLStatus,
   runETL,
   backfillETL,
@@ -760,7 +823,15 @@ const parsedBvids = reactive({
   invalid: []
 })
 
-const users = ref([])
+// 每周必看采集
+const weeklyCrawlForm = reactive({
+  mode: 'latest',
+  max_episodes: 1,
+  comments_per_video: 0
+})
+const weeklyCrawlLoading = ref(false)
+
+
 const usersLoading = ref(false)
 
 const showBackfillDialog = ref(false)
@@ -958,7 +1029,37 @@ const handleStartBatchCrawl = async () => {
   }
 }
 
-const toggleETLScheduler = async () => {
+// ========== 每周必看采集方法 ==========
+const handleStartWeeklyCrawl = async () => {
+  const isAll = weeklyCrawlForm.mode === 'all'
+  const episodes = isAll ? null : weeklyCrawlForm.max_episodes
+  const label = isAll ? '全部期数（200+ 期，约 4000 个视频）' : `最新 ${episodes} 期（约 ${episodes * 20} 个视频）`
+  const commentLabel = weeklyCrawlForm.comments_per_video === 0 ? '不采评论' : `每视频 ${weeklyCrawlForm.comments_per_video} 条评论`
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要采集每周必看 ${label}，${commentLabel}？\n任务将在后台运行，可通过下方日志查看进度。`,
+      '确认采集',
+      { confirmButtonText: '开始', cancelButtonText: '取消', type: 'info' }
+    )
+
+    weeklyCrawlLoading.value = true
+    await startWeeklyCrawl({
+      max_episodes: episodes,
+      comments_per_video: weeklyCrawlForm.comments_per_video,
+    })
+    ElMessage.success('每周必看采集任务已启动，请稍后刷新日志查看进度')
+    setTimeout(fetchCrawlLogs, 2000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('启动失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    weeklyCrawlLoading.value = false
+  }
+}
+
+
   try {
     if (etlStatus.value.is_running) {
       await stopETLScheduler()

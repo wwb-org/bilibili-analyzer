@@ -202,6 +202,79 @@ def start_batch_crawl(
     }
 
 
+class WeeklyCrawlRequest(BaseModel):
+    """每周必看采集请求"""
+    max_episodes: Optional[int] = None  # None = 全部
+    comments_per_video: int = 20
+
+
+@router.post("/crawl/weekly")
+def start_weekly_crawl(
+    request: WeeklyCrawlRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    采集每周必看历史/最新数据
+
+    max_episodes=None 时采集全部期数（200+ 期）；
+    设置具体数字时只采最新 N 期（如 max_episodes=1 只采本周最新一期）。
+    后台执行，立即返回。
+    """
+    log = CrawlLog(
+        task_name=f'每周必看采集（{"全部" if request.max_episodes is None else f"最新{request.max_episodes}期"}）',
+        status='running',
+        started_at=datetime.utcnow()
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    task_id = log.id
+
+    def run_weekly_task():
+        from app.core.database import SessionLocal as _SL
+        from app.services.crawler import BilibiliCrawler
+        from app.core.config import settings as _s
+        _db = _SL()
+        try:
+            crawler = BilibiliCrawler(cookie=getattr(_s, 'BILIBILI_COOKIE', '') or '')
+            result = crawler.crawl_weekly_series(
+                max_episodes=request.max_episodes,
+                comments_per_video=request.comments_per_video,
+            )
+            log_row = _db.query(CrawlLog).filter(CrawlLog.id == task_id).first()
+            if log_row:
+                log_row.status = 'success'
+                log_row.video_count = result.get('videos_saved', 0)
+                log_row.comment_count = result.get('comments_saved', 0)
+                log_row.finished_at = datetime.utcnow()
+                _db.commit()
+        except Exception as e:
+            log_row = _db.query(CrawlLog).filter(CrawlLog.id == task_id).first()
+            if log_row:
+                log_row.status = 'failed'
+                log_row.error_msg = str(e)[:500]
+                log_row.finished_at = datetime.utcnow()
+                _db.commit()
+        finally:
+            _db.close()
+
+    background_tasks.add_task(run_weekly_task)
+
+    label = '全部期数' if request.max_episodes is None else f'最新 {request.max_episodes} 期'
+    return {
+        "message": f"每周必看采集已启动（{label}）",
+        "task_id": task_id,
+        "config": {
+            "max_episodes": request.max_episodes,
+            "comments_per_video": request.comments_per_video,
+        },
+        "status": "running"
+    }
+
+
+
 @router.get("/users")
 def get_users(
     db: Session = Depends(get_db),

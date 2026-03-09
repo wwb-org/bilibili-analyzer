@@ -380,6 +380,158 @@ class BilibiliCrawler:
             print(f"保存评论失败: {e}")
             return saved_count
 
+    @rate_limit(interval=2.0)
+    def get_weekly_series_list(self) -> Optional[List[Dict]]:
+        """获取每周必看期数列表"""
+        url = f"{self.BASE_URL}/x/web-interface/popular/series/list"
+        try:
+            resp = self.session.get(url, timeout=10)
+            data = resp.json()
+            if data['code'] == 0:
+                return data['data']['list']
+            return None
+        except Exception as e:
+            print(f"获取每周必看列表失败: {e}")
+            return None
+
+    @rate_limit(interval=2.0)
+    def get_weekly_series_one(self, number: int) -> Optional[List[Dict]]:
+        """获取指定期数的每周必看视频列表"""
+        url = f"{self.BASE_URL}/x/web-interface/popular/series/one"
+        params = {'number': number}
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+            data = resp.json()
+            if data['code'] == 0:
+                return data['data']['list']
+            return None
+        except Exception as e:
+            print(f"获取第{number}期每周必看失败: {e}")
+            return None
+
+    def crawl_weekly_series(
+        self,
+        max_episodes: int = 10,
+        comments_per_video: int = 20,
+        start_episode: int = None,
+    ) -> Dict:
+        """采集每周必看历史数据
+
+        Args:
+            max_episodes: 最多采集期数（从最新期往前，None表示全部）
+            comments_per_video: 每视频采集评论数（历史数据建议设小一点）
+            start_episode: 从哪期开始（默认最新期）
+
+        Returns:
+            采集统计
+        """
+        db = SessionLocal()
+        stats = {
+            'episodes_done': 0,
+            'videos_saved': 0,
+            'videos_skipped': 0,
+            'comments_saved': 0,
+            'errors': [],
+        }
+
+        try:
+            # 获取期数列表
+            print("正在获取每周必看期数列表...")
+            series_list = self.get_weekly_series_list()
+            if not series_list:
+                print("获取期数列表失败")
+                return stats
+
+            # 按期数降序（最新在前）
+            series_list = sorted(series_list, key=lambda x: x.get('number', 0), reverse=True)
+            total = len(series_list)
+            print(f"共发现 {total} 期每周必看")
+
+            # 确定起始期
+            if start_episode is not None:
+                series_list = [s for s in series_list if s.get('number', 0) <= start_episode]
+
+            # 限制期数
+            if max_episodes:
+                series_list = series_list[:max_episodes]
+
+            for ep_idx, episode in enumerate(series_list):
+                number = episode.get('number')
+                subject = episode.get('subject', f'第{number}期')
+                print(f"\n[{ep_idx+1}/{len(series_list)}] 采集第{number}期: {subject}")
+
+                videos = self.get_weekly_series_one(number)
+                if not videos:
+                    print(f"  第{number}期无数据，跳过")
+                    stats['errors'].append(f"第{number}期: 获取视频列表失败")
+                    continue
+
+                print(f"  本期 {len(videos)} 个视频")
+
+                for v_idx, video_raw in enumerate(videos, 1):
+                    bvid = video_raw.get('bvid')
+                    try:
+                        # 已有视频只更新数据，不重复采集评论
+                        existing = db.query(Video).filter(Video.bvid == bvid).first()
+                        if existing:
+                            video_data = self.parse_video_data(video_raw)
+                            existing.play_count = video_data['play_count']
+                            existing.like_count = video_data['like_count']
+                            existing.coin_count = video_data['coin_count']
+                            existing.danmaku_count = video_data['danmaku_count']
+                            existing.comment_count = video_data['comment_count']
+                            db.commit()
+                            stats['videos_skipped'] += 1
+                            print(f"  [{v_idx}/{len(videos)}] {bvid} 已存在，更新数据")
+                            continue
+
+                        # 获取详情（包含 aid/cid）
+                        detail = self.get_video_detail(bvid)
+                        if not detail:
+                            stats['errors'].append(f"{bvid}: 获取详情失败")
+                            continue
+
+                        video_data = self.parse_video_data(detail)
+                        video = self.save_video(video_data, db)
+
+                        if video:
+                            stats['videos_saved'] += 1
+                            print(f"  [{v_idx}/{len(videos)}] {bvid} 保存成功: {video.title[:25]}")
+
+                            # 采集评论（历史数据少采一些）
+                            if comments_per_video > 0:
+                                oid = detail.get('aid')
+                                if oid:
+                                    page_size = 20
+                                    pages = max(1, comments_per_video // page_size)
+                                    for page in range(1, pages + 1):
+                                        cmts = self.get_video_comments(oid, page=page, page_size=page_size)
+                                        if cmts:
+                                            cnt = self.save_comments(cmts, video.id, db)
+                                            stats['comments_saved'] += cnt
+
+                    except Exception as e:
+                        stats['errors'].append(f"{bvid}: {e}")
+                        print(f"  [{v_idx}] {bvid} 处理失败: {e}")
+
+                stats['episodes_done'] += 1
+                print(f"  第{number}期完成，累计入库: {stats['videos_saved']} 视频 / {stats['comments_saved']} 评论")
+
+        except Exception as e:
+            print(f"全局错误: {e}")
+            stats['errors'].append(f"全局错误: {e}")
+        finally:
+            db.close()
+
+        print(f"\n====== 每周必看采集完成 ======")
+        print(f"期数: {stats['episodes_done']} 期")
+        print(f"新增视频: {stats['videos_saved']}")
+        print(f"已有跳过: {stats['videos_skipped']}")
+        print(f"评论: {stats['comments_saved']}")
+        if stats['errors']:
+            print(f"错误数: {len(stats['errors'])}")
+        return stats
+
     def crawl_once(self, max_videos: int = 10, comments_per_video: int = 100) -> Dict:
         """单次采集流程
 

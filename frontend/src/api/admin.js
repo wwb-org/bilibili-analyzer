@@ -123,7 +123,17 @@ export const updateBilibiliCookie = (cookie) => {
   return api.post('/admin/bilibili/cookie', { cookie })
 }
 
-// ==================== 数据概览 ====================
+/**
+ * 启动每周必看历史数据采集
+ * @param {Object} config
+ * @param {number|null} config.max_episodes - 采集期数（null=全部）
+ * @param {number} config.comments_per_video - 每视频评论数
+ */
+export const startWeeklyCrawl = (config) => {
+  return api.post('/admin/crawl/weekly', config)
+}
+
+
 
 /**
  * 获取数据概览（ODS/DWD/DWS 三层按日期统计）

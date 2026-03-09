@@ -5,7 +5,7 @@
       <el-aside width="240px" class="sidebar">
         <div class="logo-container">
           <img src="@/bilibili.svg" alt="Logo" class="logo-icon" />
-          <span class="logo-text">趋势分析系统</span>
+          <span class="logo-text">B站视频分析系统</span>
         </div>
         
         <el-menu
