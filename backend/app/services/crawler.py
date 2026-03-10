@@ -413,25 +413,33 @@ class BilibiliCrawler:
         self,
         max_episodes: int = 10,
         comments_per_video: int = 20,
+        danmakus_per_video: int = 0,
         start_episode: int = None,
+        log_id: int = None,
+        stop_event=None,
     ) -> Dict:
         """采集每周必看历史数据
 
         Args:
             max_episodes: 最多采集期数（从最新期往前，None表示全部）
             comments_per_video: 每视频采集评论数（历史数据建议设小一点）
+            danmakus_per_video: 每视频采集弹幕数（0=不采）
             start_episode: 从哪期开始（默认最新期）
+            log_id: CrawlLog 记录ID，用于实时更新进度
 
         Returns:
             采集统计
         """
+        from app.models.models import CrawlLog as _CrawlLog
         db = SessionLocal()
         stats = {
             'episodes_done': 0,
             'videos_saved': 0,
             'videos_skipped': 0,
             'comments_saved': 0,
+            'danmakus_saved': 0,
             'errors': [],
+            'stopped': False,
         }
 
         try:
@@ -456,6 +464,10 @@ class BilibiliCrawler:
                 series_list = series_list[:max_episodes]
 
             for ep_idx, episode in enumerate(series_list):
+                if stop_event and stop_event.is_set():
+                    print("[每周必看] 收到停止信号，已停止")
+                    stats['stopped'] = True
+                    break
                 number = episode.get('number')
                 subject = episode.get('subject', f'第{number}期')
                 print(f"\n[{ep_idx+1}/{len(series_list)}] 采集第{number}期: {subject}")
@@ -498,7 +510,7 @@ class BilibiliCrawler:
                             stats['videos_saved'] += 1
                             print(f"  [{v_idx}/{len(videos)}] {bvid} 保存成功: {video.title[:25]}")
 
-                            # 采集评论（历史数据少采一些）
+                            # 采集评论
                             if comments_per_video > 0:
                                 oid = detail.get('aid')
                                 if oid:
@@ -510,12 +522,45 @@ class BilibiliCrawler:
                                             cnt = self.save_comments(cmts, video.id, db)
                                             stats['comments_saved'] += cnt
 
+                            # 采集弹幕
+                            if danmakus_per_video > 0:
+                                cid = detail.get('cid')
+                                if cid:
+                                    danmakus = self.get_video_danmakus(cid, max_count=danmakus_per_video)
+                                    if danmakus:
+                                        from app.models.models import Danmaku
+                                        existing_contents = set(
+                                            d[0] for d in db.query(Danmaku.content)
+                                            .filter(Danmaku.video_id == video.id).all()
+                                        )
+                                        for dm in danmakus:
+                                            content = dm.get('content', '').strip()
+                                            if content and content not in existing_contents:
+                                                db.add(Danmaku(
+                                                    video_id=video.id,
+                                                    content=content,
+                                                    send_time=dm.get('send_time'),
+                                                    color=dm.get('color'),
+                                                ))
+                                                existing_contents.add(content)
+                                                stats['danmakus_saved'] += 1
+                                        db.commit()
+
                     except Exception as e:
                         stats['errors'].append(f"{bvid}: {e}")
                         print(f"  [{v_idx}] {bvid} 处理失败: {e}")
 
                 stats['episodes_done'] += 1
-                print(f"  第{number}期完成，累计入库: {stats['videos_saved']} 视频 / {stats['comments_saved']} 评论")
+                print(f"  第{number}期完成，累计入库: {stats['videos_saved']} 视频 / {stats['comments_saved']} 评论 / {stats['danmakus_saved']} 弹幕")
+
+                # 实时更新日志进度
+                if log_id:
+                    log_row = db.query(_CrawlLog).filter(_CrawlLog.id == log_id).first()
+                    if log_row:
+                        log_row.video_count = stats['videos_saved'] + stats['videos_skipped']
+                        log_row.comment_count = stats['comments_saved']
+                        log_row.danmaku_count = stats['danmakus_saved']
+                        db.commit()
 
         except Exception as e:
             print(f"全局错误: {e}")
@@ -528,6 +573,7 @@ class BilibiliCrawler:
         print(f"新增视频: {stats['videos_saved']}")
         print(f"已有跳过: {stats['videos_skipped']}")
         print(f"评论: {stats['comments_saved']}")
+        print(f"弹幕: {stats['danmakus_saved']}")
         if stats['errors']:
             print(f"错误数: {len(stats['errors'])}")
         return stats

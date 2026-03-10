@@ -44,6 +44,13 @@ export const getCrawlStatus = () => {
 }
 
 /**
+ * 停止正在运行的采集任务
+ */
+export const stopCrawl = () => {
+  return api.post('/admin/crawl/stop')
+}
+
+/**
  * 获取 ETL 调度器状态
  */
 export const getETLStatus = () => {

@@ -377,10 +377,18 @@ BV1zz4y1c7mZ
                 </el-form-item>
                 <el-form-item label="每视频评论数">
                   <el-select v-model="weeklyCrawlForm.comments_per_video" style="width: 130px">
-                    <el-option label="不采评论（最快）" :value="0" />
+                    <el-option label="不采评论" :value="0" />
                     <el-option label="20 条" :value="20" />
                     <el-option label="50 条" :value="50" />
                     <el-option label="100 条" :value="100" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="每视频弹幕数">
+                  <el-select v-model="weeklyCrawlForm.danmakus_per_video" style="width: 130px">
+                    <el-option label="不采弹幕（最快）" :value="0" />
+                    <el-option label="200 条" :value="200" />
+                    <el-option label="500 条" :value="500" />
+                    <el-option label="1000 条" :value="1000" />
                   </el-select>
                 </el-form-item>
                 <el-form-item>
@@ -409,10 +417,22 @@ BV1zz4y1c7mZ
         <div class="log-section">
           <div class="section-header">
             <span class="section-title">最近采集日志</span>
-            <el-button text type="primary" @click="fetchCrawlLogs">
-              <el-icon><Refresh /></el-icon>
-              刷新
-            </el-button>
+            <div class="section-actions">
+              <el-button
+                v-if="isCrawlingNow"
+                type="danger"
+                size="small"
+                :loading="stopLoading"
+                @click="handleStopCrawl"
+              >
+                <el-icon><VideoPause /></el-icon>
+                停止采集
+              </el-button>
+              <el-button text type="primary" @click="fetchCrawlLogs">
+                <el-icon><Refresh /></el-icon>
+                刷新
+              </el-button>
+            </div>
           </div>
           <el-table :data="crawlLogs" stripe style="width: 100%" v-loading="logsLoading">
             <el-table-column prop="started_at" label="开始时间" width="180">
@@ -744,7 +764,7 @@ BV1zz4y1c7mZ
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Connection,
@@ -771,6 +791,7 @@ import {
   startCrawl,
   startBatchCrawl,
   startWeeklyCrawl,
+  stopCrawl,
   getETLStatus,
   runETL,
   backfillETL,
@@ -807,8 +828,11 @@ const crawlConfig = reactive({
   danmakus_per_video: 500
 })
 const crawlLoading = ref(false)
+const stopLoading = ref(false)
 const crawlLogs = ref([])
 const logsLoading = ref(false)
+let logPollTimer = null
+const isCrawlingNow = computed(() => crawlLogs.value.some(l => l.status === 'running'))
 const crawlTab = ref('popular')
 
 // 批量采集
@@ -827,7 +851,8 @@ const parsedBvids = reactive({
 const weeklyCrawlForm = reactive({
   mode: 'latest',
   max_episodes: 1,
-  comments_per_video: 0
+  comments_per_video: 0,
+  danmakus_per_video: 0,
 })
 const weeklyCrawlLoading = ref(false)
 
@@ -897,10 +922,28 @@ const fetchETLStatus = async () => {
   }
 }
 
+const startLogPolling = () => {
+  if (logPollTimer) return
+  logPollTimer = setInterval(async () => {
+    try {
+      crawlLogs.value = await getCrawlLogs(20)
+    } catch { /* ignore */ }
+    const stillRunning = crawlLogs.value.some(l => l.status === 'running')
+    if (!stillRunning) {
+      clearInterval(logPollTimer)
+      logPollTimer = null
+    }
+  }, 5000)
+}
+
 const fetchCrawlLogs = async () => {
   logsLoading.value = true
   try {
     crawlLogs.value = await getCrawlLogs(20)
+    // 有任务执行中时启动自动轮询，全部完成时停止
+    if (crawlLogs.value.some(l => l.status === 'running')) {
+      startLogPolling()
+    }
   } catch (e) {
     console.error('获取采集日志失败', e)
   } finally {
@@ -930,15 +973,34 @@ const handleStartCrawl = async () => {
     crawlLoading.value = true
     await startCrawl(crawlConfig)
     ElMessage.success('采集任务已启动，请稍后刷新日志查看进度')
-
-    // 延迟刷新日志
     setTimeout(fetchCrawlLogs, 3000)
+    startLogPolling()
   } catch (e) {
     if (e !== 'cancel') {
       ElMessage.error('启动采集失败: ' + (e.response?.data?.detail || e.message))
     }
   } finally {
     crawlLoading.value = false
+  }
+}
+
+const handleStopCrawl = async () => {
+  try {
+    await ElMessageBox.confirm('确定要停止当前采集任务吗？任务将在处理完当前视频后停止。', '停止采集', {
+      type: 'warning',
+      confirmButtonText: '停止',
+      cancelButtonText: '取消'
+    })
+    stopLoading.value = true
+    await stopCrawl()
+    ElMessage.success('已发送停止信号，任务将在当前视频处理完成后停止')
+    setTimeout(fetchCrawlLogs, 3000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('停止失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    stopLoading.value = false
   }
 }
 
@@ -1018,8 +1080,8 @@ const handleStartBatchCrawl = async () => {
     parsedBvids.valid = []
     parsedBvids.invalid = []
 
-    // 延迟刷新日志
     setTimeout(fetchCrawlLogs, 3000)
+    startLogPolling()
   } catch (e) {
     if (e !== 'cancel') {
       ElMessage.error('启动采集失败: ' + (e.response?.data?.detail || e.message))
@@ -1047,9 +1109,11 @@ const handleStartWeeklyCrawl = async () => {
     await startWeeklyCrawl({
       max_episodes: episodes,
       comments_per_video: weeklyCrawlForm.comments_per_video,
+      danmakus_per_video: weeklyCrawlForm.danmakus_per_video,
     })
     ElMessage.success('每周必看采集任务已启动，请稍后刷新日志查看进度')
     setTimeout(fetchCrawlLogs, 2000)
+    startLogPolling()
   } catch (e) {
     if (e !== 'cancel') {
       ElMessage.error('启动失败: ' + (e.response?.data?.detail || e.message))
@@ -1060,6 +1124,7 @@ const handleStartWeeklyCrawl = async () => {
 }
 
 
+const toggleETLScheduler = async () => {
   try {
     if (etlStatus.value.is_running) {
       await stopETLScheduler()
@@ -1345,12 +1410,12 @@ const formatDate = (date) => {
 }
 
 const getStatusType = (status) => {
-  const map = { running: 'warning', success: 'success', failed: 'danger' }
+  const map = { running: 'warning', success: 'success', failed: 'danger', stopped: 'info' }
   return map[status] || 'info'
 }
 
 const getStatusText = (status) => {
-  const map = { running: '执行中', success: '成功', failed: '失败' }
+  const map = { running: '执行中', success: '成功', failed: '失败', stopped: '已停止' }
   return map[status] || status
 }
 
@@ -1363,6 +1428,13 @@ onMounted(() => {
   fetchUsers()
   fetchModelInfo()
   fetchDataOverview()
+})
+
+onUnmounted(() => {
+  if (logPollTimer) {
+    clearInterval(logPollTimer)
+    logPollTimer = null
+  }
 })
 </script>
 

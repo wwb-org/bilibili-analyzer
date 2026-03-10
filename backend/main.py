@@ -33,6 +33,27 @@ async def lifespan(app: FastAPI):
     """
     # 启动时执行
     logger.info("应用启动中...")
+
+    # 修复上次意外中断遗留的 running 状态日志
+    from app.core.database import SessionLocal
+    from app.models.models import CrawlLog
+    from datetime import datetime
+    _db = SessionLocal()
+    try:
+        stuck = _db.query(CrawlLog).filter(
+            CrawlLog.status == 'running',
+            CrawlLog.finished_at.is_(None)
+        ).all()
+        if stuck:
+            for log in stuck:
+                log.status = 'stopped'
+                log.error_msg = '服务重启，任务中断'
+                log.finished_at = datetime.utcnow()
+            _db.commit()
+            logger.info(f"修复 {len(stuck)} 条中断任务日志")
+    finally:
+        _db.close()
+
     etl_scheduler.start()
     logger.info("ETL调度器已启动")
 

@@ -2,6 +2,7 @@
 管理员API
 """
 import re
+import threading
 from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -21,6 +22,10 @@ from app.etl.scheduler import etl_scheduler
 from app.services.crawl_service import CrawlService
 
 router = APIRouter()
+
+# 全局采集停止信号（用于跨线程通知后台采集任务停止）
+_crawl_stop_event = threading.Event()
+_crawl_active = False
 
 
 def require_admin(current_user: User = Depends(get_current_user)):
@@ -96,14 +101,23 @@ def start_crawl(
 
     在后台执行采集任务，立即返回任务启动状态
     """
+    global _crawl_active
+    _crawl_stop_event.clear()
+    _crawl_active = True
+
     def run_crawl_task():
         """后台采集任务"""
-        service = CrawlService()
-        service.crawl_popular_videos(
-            max_videos=request.max_videos,
-            comments_per_video=request.comments_per_video,
-            danmakus_per_video=request.danmakus_per_video
-        )
+        global _crawl_active
+        try:
+            service = CrawlService()
+            service.crawl_popular_videos(
+                max_videos=request.max_videos,
+                comments_per_video=request.comments_per_video,
+                danmakus_per_video=request.danmakus_per_video,
+                stop_event=_crawl_stop_event
+            )
+        finally:
+            _crawl_active = False
 
     background_tasks.add_task(run_crawl_task)
 
@@ -127,7 +141,7 @@ def get_crawl_status(
     latest_log = db.query(CrawlLog).order_by(CrawlLog.started_at.desc()).first()
 
     if not latest_log:
-        return {"status": "no_task", "message": "暂无采集记录"}
+        return {"status": "no_task", "message": "暂无采集记录", "is_active": _crawl_active}
 
     return {
         "id": latest_log.id,
@@ -138,7 +152,8 @@ def get_crawl_status(
         "danmaku_count": latest_log.danmaku_count or 0,
         "started_at": latest_log.started_at.isoformat() if latest_log.started_at else None,
         "finished_at": latest_log.finished_at.isoformat() if latest_log.finished_at else None,
-        "error_msg": latest_log.error_msg
+        "error_msg": latest_log.error_msg,
+        "is_active": _crawl_active
     }
 
 
@@ -151,6 +166,20 @@ def get_crawl_logs(
     """获取采集日志"""
     logs = db.query(CrawlLog).order_by(CrawlLog.started_at.desc()).limit(limit).all()
     return logs
+
+
+@router.post("/crawl/stop")
+def stop_crawl(admin: User = Depends(require_admin)):
+    """
+    停止正在运行的采集任务
+
+    发送停止信号，任务将在处理完当前视频后停止
+    """
+    _crawl_stop_event.set()
+    return {
+        "message": "已发送停止信号，任务将在当前视频处理完成后停止",
+        "is_active": _crawl_active
+    }
 
 
 @router.post("/crawl/batch")
@@ -180,14 +209,22 @@ def start_batch_crawl(
 
     def run_batch_crawl_task():
         """后台批量采集任务"""
-        service = CrawlService()
-        service.crawl_batch_videos(
-            bvids=request.bvids,
-            comments_per_video=request.comments_per_video,
-            danmakus_per_video=request.danmakus_per_video,
-            log_id=task_id
-        )
+        global _crawl_active
+        try:
+            service = CrawlService()
+            service.crawl_batch_videos(
+                bvids=request.bvids,
+                comments_per_video=request.comments_per_video,
+                danmakus_per_video=request.danmakus_per_video,
+                log_id=task_id,
+                stop_event=_crawl_stop_event
+            )
+        finally:
+            _crawl_active = False
 
+    global _crawl_active
+    _crawl_stop_event.clear()
+    _crawl_active = True
     background_tasks.add_task(run_batch_crawl_task)
 
     return {
@@ -206,6 +243,7 @@ class WeeklyCrawlRequest(BaseModel):
     """每周必看采集请求"""
     max_episodes: Optional[int] = None  # None = 全部
     comments_per_video: int = 20
+    danmakus_per_video: int = 0
 
 
 @router.post("/crawl/weekly")
@@ -236,18 +274,28 @@ def start_weekly_crawl(
         from app.core.database import SessionLocal as _SL
         from app.services.crawler import BilibiliCrawler
         from app.core.config import settings as _s
+        global _crawl_active
         _db = _SL()
         try:
             crawler = BilibiliCrawler(cookie=getattr(_s, 'BILIBILI_COOKIE', '') or '')
             result = crawler.crawl_weekly_series(
                 max_episodes=request.max_episodes,
                 comments_per_video=request.comments_per_video,
+                danmakus_per_video=request.danmakus_per_video,
+                log_id=task_id,
+                stop_event=_crawl_stop_event,
             )
             log_row = _db.query(CrawlLog).filter(CrawlLog.id == task_id).first()
             if log_row:
-                log_row.status = 'success'
-                log_row.video_count = result.get('videos_saved', 0)
+                if result.get('stopped'):
+                    log_row.status = 'stopped'
+                    log_row.error_msg = '用户手动停止'
+                else:
+                    log_row.status = 'success'
+                # videos_saved = 新增，videos_skipped = 已有但更新了数据，两者都算处理过
+                log_row.video_count = result.get('videos_saved', 0) + result.get('videos_skipped', 0)
                 log_row.comment_count = result.get('comments_saved', 0)
+                log_row.danmaku_count = result.get('danmakus_saved', 0)
                 log_row.finished_at = datetime.utcnow()
                 _db.commit()
         except Exception as e:
@@ -258,8 +306,12 @@ def start_weekly_crawl(
                 log_row.finished_at = datetime.utcnow()
                 _db.commit()
         finally:
+            _crawl_active = False
             _db.close()
 
+    global _crawl_active
+    _crawl_stop_event.clear()
+    _crawl_active = True
     background_tasks.add_task(run_weekly_task)
 
     label = '全部期数' if request.max_episodes is None else f'最新 {request.max_episodes} 期'

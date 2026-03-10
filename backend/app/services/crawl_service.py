@@ -40,7 +40,8 @@ class CrawlService:
         self,
         max_videos: int = 50,
         comments_per_video: int = 100,
-        danmakus_per_video: int = 500
+        danmakus_per_video: int = 500,
+        stop_event=None
     ) -> Dict:
         """
         采集热门视频（带情感分析和日志记录）
@@ -93,7 +94,12 @@ class CrawlService:
             print(f"[采集任务] 获取到 {len(videos)} 个热门视频")
 
             # 遍历每个视频
+            stopped = False
             for i, video_raw in enumerate(videos[:max_videos], 1):
+                if stop_event and stop_event.is_set():
+                    stopped = True
+                    print("[采集任务] 收到停止信号，已停止")
+                    break
                 try:
                     bvid = video_raw.get('bvid')
                     print(f"\n[{i}/{max_videos}] 处理视频: {bvid}")
@@ -154,7 +160,11 @@ class CrawlService:
                     db.commit()
 
             # 更新日志状态
-            log.status = 'success'
+            if stopped:
+                log.status = 'stopped'
+                log.error_msg = '用户手动停止'
+            else:
+                log.status = 'success'
             log.video_count = stats['videos_saved']
             log.comment_count = stats['comments_saved']
             log.danmaku_count = stats['danmakus_saved']
@@ -163,8 +173,9 @@ class CrawlService:
 
             print(f"\n[采集任务] 完成！视频: {stats['videos_saved']}, 评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
 
-            # 采集成功后自动执行ETL
-            self._run_etl_after_crawl()
+            # 采集成功后自动执行ETL（停止时不触发）
+            if not stopped:
+                self._run_etl_after_crawl()
 
             return stats
 
@@ -380,7 +391,8 @@ class CrawlService:
         bvids: List[str],
         comments_per_video: int = 100,
         danmakus_per_video: int = 500,
-        log_id: int = None
+        log_id: int = None,
+        stop_event=None
     ) -> Dict:
         """
         批量采集指定视频
@@ -422,7 +434,12 @@ class CrawlService:
         try:
             print(f"\n[批量采集] 开始采集 {len(bvids)} 个指定视频")
 
+            stopped = False
             for i, bvid in enumerate(bvids, 1):
+                if stop_event and stop_event.is_set():
+                    stopped = True
+                    print("[批量采集] 收到停止信号，已停止")
+                    break
                 video_result = {
                     'bvid': bvid,
                     'status': 'pending',
@@ -495,13 +512,17 @@ class CrawlService:
                 stats['details'].append(video_result)
 
             # 更新日志状态
-            log.status = 'success'
+            if stopped:
+                log.status = 'stopped'
+                log.error_msg = '用户手动停止'
+            else:
+                log.status = 'success'
             log.video_count = stats['videos_saved']
             log.comment_count = stats['comments_saved']
             log.danmaku_count = stats['danmakus_saved']
             log.finished_at = datetime.utcnow()
 
-            if stats['errors']:
+            if not stopped and stats['errors']:
                 # 部分失败时记录错误信息
                 log.error_msg = f"部分失败({len(stats['errors'])}个): " + '; '.join(stats['errors'][:5])
 
@@ -510,8 +531,9 @@ class CrawlService:
             print(f"\n[批量采集] 完成！成功: {stats['videos_saved']}/{stats['total']}, "
                   f"评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
 
-            # 采集成功后自动执行ETL
-            self._run_etl_after_crawl()
+            # 采集成功后自动执行ETL（停止时不触发）
+            if not stopped:
+                self._run_etl_after_crawl()
 
             return stats
 
