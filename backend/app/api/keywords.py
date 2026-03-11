@@ -373,11 +373,14 @@ def get_dws_map(db: Session, stat_date: date, words: List[str]) -> Dict[str, Dws
     """批量获取DWS指标映射"""
     if not words:
         return {}
-    stats = db.query(DwsKeywordStats).filter(
-        DwsKeywordStats.stat_date == stat_date,
-        DwsKeywordStats.word.in_(words)
-    ).all()
-    return {s.word: s for s in stats}
+    try:
+        stats = db.query(DwsKeywordStats).filter(
+            DwsKeywordStats.stat_date == stat_date,
+            DwsKeywordStats.word.in_(words)
+        ).all()
+        return {s.word: s for s in stats}
+    except Exception:
+        return {}
 
 
 def get_previous_stat_date(db: Session, start_date: date, latest_date: date) -> Optional[date]:
@@ -469,7 +472,7 @@ def build_keyword_insights(
         change_abs = current_frequency - previous_frequency
         change_rate = calc_change_rate(current_frequency, previous_frequency)
         dws = dws_map.get(word)
-        heat_score = dws.heat_score if dws else 0.0
+        heat_score = float(dws.heat_score or 0) if dws else 0.0
         avg_sentiment = current.get("avg_sentiment")
         sentiment_value = avg_sentiment if avg_sentiment is not None else 0.5
 
@@ -739,8 +742,8 @@ def get_keyword_ranking(
     items = []
     for i, s in enumerate(page_items):
         dws = dws_map.get(s["word"])
-        rank_change = dws.rank_change if dws else 0
-        heat_score = dws.heat_score if dws else 0
+        rank_change = int(dws.rank_change or 0) if dws else 0
+        heat_score = float(dws.heat_score or 0) if dws else 0.0
 
         # 确定趋势方向
         if rank_change > 0:

@@ -517,8 +517,10 @@ import {
   getContentSuggestions
 } from '@/api/keywords'
 import { getCategories } from '@/api/videos'
+import { useKeywordsStore } from '@/store/keywords'
 
 const router = useRouter()
+const kwStore = useKeywordsStore()
 
 // ========== 状态 ==========
 const loading = ref(false)
@@ -699,6 +701,7 @@ const handleFilterChange = () => {
 }
 
 const refreshData = () => {
+  kwStore.cachedAt = null
   loadAllData()
 }
 
@@ -852,15 +855,30 @@ const loadSuggestions = async () => {
 
 const loadAllData = async () => {
   loading.value = true
+  // 分两批加载，避免7个并发请求导致后端数据库连接竞争超时
   await Promise.all([
     loadOverview(),
     loadWordcloud(),
     loadRanking(),
+  ])
+  await Promise.all([
     loadMovers(),
     loadOpportunityRisk(),
     loadCategoryCompare(),
     loadSuggestions()
   ])
+  // 写入缓存
+  kwStore.overview = { ...overviewStats }
+  kwStore.wordcloudData = wordcloudData.value
+  kwStore.rankingData = rankingData.value
+  kwStore.rankingTotal = rankingTotal.value
+  kwStore.movers = { ...moversData }
+  kwStore.opportunityRisk = { ...opportunityRiskData }
+  kwStore.categoryCompareData = categoryCompareData.value
+  kwStore.suggestionsData = suggestionsData.value
+  kwStore.categoryOptions = categoryOptions.value
+  kwStore.filterKey = JSON.stringify(getFilterParams())
+  kwStore.cachedAt = Date.now()
   loading.value = false
 }
 
@@ -882,12 +900,13 @@ const selectKeyword = async (word) => {
     const res = await getKeywordDetail(word, detailParams)
     keywordDetail.value = res
     await loadContributors(word)
+    // 先关闭骨架屏，让图表容器进入 DOM
+    loadingDetail.value = false
     await nextTick()
     renderDetailCharts()
   } catch (e) {
     ElMessage.error('获取详情失败')
     keywordDetail.value = null
-  } finally {
     loadingDetail.value = false
   }
 }
@@ -1234,10 +1253,38 @@ const goToVideo = (bvid) => {
   router.push({ path: '/videos', query: { bvid } })
 }
 
+// ========== 从缓存恢复 ==========
+const restoreFromCache = async () => {
+  const s = kwStore
+  categoryOptions.value = s.categoryOptions
+  Object.assign(overviewStats, s.overview)
+  checkDataFreshness()
+  wordcloudData.value = s.wordcloudData
+  rankingData.value = s.rankingData
+  rankingTotal.value = s.rankingTotal
+  moversData.rising = s.movers.rising
+  moversData.falling = s.movers.falling
+  moversData.previous_date = s.movers.previous_date
+  opportunityRiskData.opportunities = s.opportunityRisk.opportunities
+  opportunityRiskData.risks = s.opportunityRisk.risks
+  categoryCompareData.value = s.categoryCompareData
+  if (categoryCompareData.value.length > 0 && !selectedCategory.value) {
+    selectedCategory.value = categoryCompareData.value[0].category
+  }
+  suggestionsData.value = s.suggestionsData
+  await nextTick()
+  renderWordcloud()
+  renderCategoryBarCompare()
+}
+
 // ========== 生命周期 ==========
 onMounted(async () => {
-  await loadCategories()
-  await loadAllData()
+  if (kwStore.isFresh && kwStore.filterKey === JSON.stringify(getFilterParams())) {
+    await restoreFromCache()
+  } else {
+    await loadCategories()
+    await loadAllData()
+  }
   window.addEventListener('resize', handleResize)
 })
 

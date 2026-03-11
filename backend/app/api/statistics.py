@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models import Video, Comment, Keyword
 from app.models.warehouse import (
     DwdVideoSnapshot,
+    DwdKeywordDaily,
     DwsStatsDaily,
     DwsCategoryDaily,
     DwsSentimentDaily,
@@ -172,11 +173,29 @@ def get_keywords(
     category: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """获取热词数据"""
+    """获取热词数据（优先从DWD层查询）"""
+    # 优先从 dwd_keyword_daily 查询（有数据）
+    try:
+        latest_date = db.query(func.max(DwdKeywordDaily.stat_date)).scalar()
+        if latest_date:
+            query = db.query(
+                DwdKeywordDaily.word,
+                func.sum(DwdKeywordDaily.frequency).label("total_freq")
+            ).filter(DwdKeywordDaily.stat_date == latest_date)
+            if category:
+                query = query.filter(DwdKeywordDaily.category == category)
+            rows = query.group_by(DwdKeywordDaily.word).order_by(
+                func.sum(DwdKeywordDaily.frequency).desc()
+            ).limit(limit).all()
+            if rows:
+                return [KeywordItem(word=r.word, frequency=r.total_freq) for r in rows]
+    except Exception:
+        pass
+
+    # 降级：从旧 keywords 表查询
     query = db.query(Keyword)
     if category:
         query = query.filter(Keyword.category == category)
-
     keywords = query.order_by(Keyword.frequency.desc()).limit(limit).all()
     return [KeywordItem(word=k.word, frequency=k.frequency) for k in keywords]
 

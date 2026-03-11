@@ -7,9 +7,15 @@
         <h2 class="page-title">数据概览</h2>
         <span class="page-desc">B站视频内容趋势分析系统</span>
       </div>
-      <div class="live-clock">
-        <span class="clock-time">{{ clockTime }}</span>
-        <span class="clock-date">{{ clockDate }}</span>
+      <div class="header-right">
+        <span v-if="homeStore.isFresh" class="cache-hint">
+          数据更新于 {{ ageText }} ·
+          <span class="cache-refresh" @click="handleRefresh">重新加载</span>
+        </span>
+        <div class="live-clock">
+          <span class="clock-time">{{ clockTime }}</span>
+          <span class="clock-date">{{ clockDate }}</span>
+        </div>
       </div>
     </div>
 
@@ -40,8 +46,8 @@
       <div ref="bubbleRef" class="chart-xl"></div>
     </div>
 
-    <!-- S2 趋势视频监控 + S10 平台增长趋势 -->
-    <div class="row-dual">
+    <!-- S2 趋势视频监控 -->
+    <div class="row-single">
       <!-- S2 -->
       <div class="card">
         <div class="card-header-line">
@@ -76,16 +82,6 @@
             </div>
           </a>
         </div>
-      </div>
-
-      <!-- S10 -->
-      <div class="card">
-        <div class="card-header-line">
-          <div class="section-num">10</div>
-          <h3 class="card-title">平台增长趋势</h3>
-          <span class="card-desc">播放增量 · 新增视频 · 来自 dws_stats_daily</span>
-        </div>
-        <div ref="growthRef" class="chart-area"></div>
       </div>
     </div>
 
@@ -226,11 +222,14 @@ import * as echarts from 'echarts'
 import 'echarts-wordcloud'
 import {
   getOverview, getVideoScatter, getKeywords, getPublishHeatmap,
-  getTopVideos, getTrends, getCrawlTrends,
-  getDwVideoTrends, getDwTrends, getDwCategories,
+  getTopVideos,
+  getDwVideoTrends, getDwCategories,
   getDwSentiment, getDwSentimentTrends,
   getLifecycle, getOpportunities, getAuthorRanking,
 } from '@/api/statistics'
+import { useHomeStore } from '@/store/home'
+
+const homeStore = useHomeStore()
 
 // ====== 时钟 ======
 const clockTime = ref('')
@@ -241,6 +240,19 @@ const tickClock = () => {
   const pad = n => String(n).padStart(2, '0')
   clockTime.value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
   clockDate.value = `${now.getFullYear()}.${pad(now.getMonth()+1)}.${pad(now.getDate())}`
+}
+
+// ====== 缓存状态 ======
+// 依赖 clockTime 每秒自动刷新显示
+const ageText = computed(() => {
+  clockTime.value // 建立对时钟的响应式依赖，每秒更新
+  if (!homeStore.cachedAt) return ''
+  const mins = Math.floor((Date.now() - homeStore.cachedAt) / 60000)
+  return mins < 1 ? '刚刚' : `${mins} 分钟前`
+})
+const handleRefresh = () => {
+  homeStore.cachedAt = null
+  loadAll()
 }
 
 // ====== 数字动画 ======
@@ -286,7 +298,6 @@ const authors = ref([])
 
 // ====== Chart refs & instances ======
 const bubbleRef    = ref(null)
-const growthRef    = ref(null)
 const lifecycleRef = ref(null)
 const categoryRef  = ref(null)
 const sentPieRef   = ref(null)
@@ -295,7 +306,6 @@ const wordcloudRef = ref(null)
 const heatmapRef   = ref(null)
 
 let bubbleChart    = null
-let growthChart    = null
 let lifecycleChart = null
 let categoryChart  = null
 let sentPieChart   = null
@@ -366,60 +376,6 @@ const initBubble = (videos) => {
     ],
     series,
     animationDuration: 800,
-  })
-}
-
-// ===========================
-// S10: 平台增长趋势（多折线）
-// ===========================
-const initGrowth = (playData, videoData, playLabel = '播放增量', videoLabel = '新增视频') => {
-  if (!growthRef.value) return
-  if (!growthChart) growthChart = echarts.init(growthRef.value)
-
-  const dates = (playData.length ? playData : videoData).map(d => d.date.slice(5))
-  growthChart.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: {
-      data: [playLabel, videoLabel],
-      bottom: 0, itemWidth: 12, itemHeight: 8,
-      textStyle: { fontSize: 11, color: '#61666D' },
-    },
-    grid: { top: 16, right: 16, bottom: 44, left: 56 },
-    xAxis: {
-      type: 'category', data: dates,
-      axisLabel: { color:'#9499A0', fontSize:10 },
-      axisLine: { lineStyle: { color:'#E7E7E7' } },
-    },
-    yAxis: [
-      {
-        type: 'value', name: '播放增量',
-        nameTextStyle: { color:'#9499A0', fontSize:10 },
-        axisLabel: { color:'#9499A0', fontSize:10, formatter: v => formatLarge(v) },
-        splitLine: { lineStyle: { color:'#F4F4F4' } },
-      },
-      {
-        type: 'value', name: '视频数',
-        nameTextStyle: { color:'#9499A0', fontSize:10 },
-        axisLabel: { color:'#9499A0', fontSize:10 },
-        splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: playLabel, type: 'line', smooth: true, yAxisIndex: 0,
-        data: playData.map(d => d.value),
-        itemStyle: { color: '#00A1D6' },
-        areaStyle: { color: 'rgba(0,161,214,0.08)' },
-        symbol: 'none',
-      },
-      {
-        name: videoLabel, type: 'bar', yAxisIndex: 1,
-        data: videoData.map(d => d.value),
-        itemStyle: { color: '#00B578', opacity: 0.7 },
-        barMaxWidth: 12,
-      },
-    ],
-    animationDuration: 600,
   })
 }
 
@@ -680,7 +636,6 @@ const initHeatmap = (raw) => {
 const loadAll = async () => {
   const [
     ovRes, scatterRes, trendRes,
-    growthPlayRes, growthVideoRes,
     lifecycleRes, catRes,
     sentRes, sentTrendRes,
     kwRes, hmRes,
@@ -689,8 +644,6 @@ const loadAll = async () => {
     getOverview(),
     getVideoScatter(400),
     getDwVideoTrends(10),
-    getDwTrends(14, 'play_increment'),
-    getDwTrends(14, 'new_videos'),
     getLifecycle(),
     getDwCategories(),
     getDwSentiment(),
@@ -704,6 +657,7 @@ const loadAll = async () => {
   // 指标卡
   if (ovRes.status === 'fulfilled') {
     const d = ovRes.value
+    homeStore.overview = d
     animTo('videos',   d.total_videos    || 0)
     animTo('play',     d.total_play_count || 0)
     animTo('comments', d.total_comment_count || 0)
@@ -714,6 +668,7 @@ const loadAll = async () => {
   // S1 气泡散点
   if (scatterRes.status === 'fulfilled') {
     const videos = scatterRes.value?.videos || []
+    homeStore.scatter = videos
     await nextTick()
     initBubble(videos)
   }
@@ -745,89 +700,92 @@ const loadAll = async () => {
       trendIsFallback.value = true
     } catch { /* ignore */ }
   }
-
-  // S10 平台增长（三级降级：DW → crawl-trends → overview单点）
-  let playData  = growthPlayRes.status  === 'fulfilled' ? (growthPlayRes.value  || []) : []
-  let videoData = growthVideoRes.status === 'fulfilled' ? (growthVideoRes.value || []) : []
-  let growthPlayLabel  = '播放增量'
-  let growthVideoLabel = '新增视频'
-  // 第二级：crawl-trends（按采集/发布时间聚合）
-  if (!playData.length && !videoData.length) {
-    try {
-      const crawl = await getCrawlTrends(30)
-      const rows = crawl?.data || []
-      if (rows.length) {
-        playData  = rows.map(r => ({ date: r.date, value: r.total_play }))
-        videoData = rows.map(r => ({ date: r.date, value: r.video_count }))
-        growthPlayLabel  = '累计播放量'
-        growthVideoLabel = '入库视频数'
-      }
-    } catch { /* ignore */ }
-  }
-  // 第三级：用 overview 汇总数据构造单点（总量兜底）
-  if (!playData.length && !videoData.length && ovRes.status === 'fulfilled') {
-    const d = ovRes.value
-    const today = new Date().toISOString().slice(0, 10)
-    if (d.total_play_count > 0) {
-      playData  = [{ date: today, value: d.total_play_count }]
-      videoData = [{ date: today, value: d.total_videos }]
-      growthPlayLabel  = '总播放量'
-      growthVideoLabel = '总视频数'
-    }
-  }
-  if (playData.length || videoData.length) {
-    await nextTick()
-    initGrowth(playData, videoData, growthPlayLabel, growthVideoLabel)
-  }
+  homeStore.trendVideos = trendVideos.value
+  homeStore.trendIsFallback = trendIsFallback.value
 
   // S3 生命周期
   if (lifecycleRes.status === 'fulfilled') {
     const d = lifecycleRes.value?.data || []
+    homeStore.lifecycle = d
     if (d.length) { await nextTick(); initLifecycle(d) }
   }
 
   // S4 分类表现
   if (catRes.status === 'fulfilled') {
     const cats = Array.isArray(catRes.value) ? catRes.value : []
+    homeStore.categories = cats
     if (cats.length) { await nextTick(); initCategory(cats) }
   }
 
   // S5 情绪
   if (sentRes.status === 'fulfilled') {
+    homeStore.sentiment = sentRes.value || {}
     await nextTick()
     initSentimentPie(sentRes.value || {})
   }
   if (sentTrendRes.status === 'fulfilled') {
     const d = sentTrendRes.value?.data || []
+    homeStore.sentimentTrend = d
     if (d.length) { await nextTick(); initSentimentTrend(d) }
   }
 
   // S6 词云
   if (kwRes.status === 'fulfilled') {
     const kws = Array.isArray(kwRes.value) ? kwRes.value : (kwRes.value?.keywords || [])
+    homeStore.keywords = kws
     if (kws.length) { await nextTick(); initWordcloud(kws) }
   }
 
   // S7 热力图
   if (hmRes.status === 'fulfilled') {
     const d = hmRes.value?.data || []
+    homeStore.heatmap = d
     if (d.length) { await nextTick(); initHeatmap(d) }
   }
 
   // S8 机会视频
   if (opRes.status === 'fulfilled') {
     opportunities.value = opRes.value?.videos || []
+    homeStore.opportunities = opportunities.value
   }
 
   // S9 UP主排行
   if (authorRes.status === 'fulfilled') {
     authors.value = authorRes.value?.authors || []
+    homeStore.authors = authors.value
   }
+
+  homeStore.cachedAt = Date.now()
+}
+
+// ====== 从缓存渲染（无需请求接口）======
+const renderAll = async () => {
+  const s = homeStore
+  if (s.overview) {
+    const d = s.overview
+    animTo('videos',   d.total_videos    || 0)
+    animTo('play',     d.total_play_count || 0)
+    animTo('comments', d.total_comment_count || 0)
+    animTo('likes',    d.total_like_count || 0)
+    animTo('avg',      Math.round(d.avg_play_count || 0))
+  }
+  trendVideos.value   = s.trendVideos
+  trendIsFallback.value = s.trendIsFallback
+  opportunities.value = s.opportunities
+  authors.value       = s.authors
+
+  await nextTick()
+  if (s.scatter.length)        initBubble(s.scatter)
+  if (s.lifecycle.length)      initLifecycle(s.lifecycle)
+  if (s.categories.length)     initCategory(s.categories)
+  if (s.sentiment)             initSentimentPie(s.sentiment)
+  if (s.sentimentTrend.length) initSentimentTrend(s.sentimentTrend)
+  if (s.keywords.length)       initWordcloud(s.keywords)
+  if (s.heatmap.length)        initHeatmap(s.heatmap)
 }
 
 const handleResize = () => {
   bubbleChart?.resize()
-  growthChart?.resize()
   lifecycleChart?.resize()
   categoryChart?.resize()
   sentPieChart?.resize()
@@ -841,14 +799,17 @@ onMounted(async () => {
   clockTimer = setInterval(tickClock, 1000)
   window.addEventListener('resize', handleResize)
   await nextTick()
-  loadAll()
+  if (homeStore.isFresh) {
+    renderAll()
+  } else {
+    loadAll()
+  }
 })
 
 onUnmounted(() => {
   clearInterval(clockTimer)
   window.removeEventListener('resize', handleResize)
   bubbleChart?.dispose()
-  growthChart?.dispose()
   lifecycleChart?.dispose()
   categoryChart?.dispose()
   sentPieChart?.dispose()
@@ -882,6 +843,21 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 .live-clock { text-align: right; }
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.cache-hint {
+  font-size: 12px;
+  color: var(--text-placeholder);
+}
+.cache-refresh {
+  color: var(--bili-blue);
+  cursor: pointer;
+}
+.cache-refresh:hover { text-decoration: underline; }
 .clock-time {
   display: block;
   font-size: 28px;
@@ -989,6 +965,9 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
+  margin-bottom: 16px;
+}
+.row-single {
   margin-bottom: 16px;
 }
 
