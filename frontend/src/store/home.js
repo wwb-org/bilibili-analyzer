@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-const CACHE_TTL = 50 * 60 * 1000 // 50 分钟
+const CACHE_TTL = 60 * 60 * 1000 // 1 小时
 
 export const useHomeStore = defineStore('home', {
   state: () => ({

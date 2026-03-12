@@ -418,7 +418,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Check } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
@@ -434,6 +434,9 @@ import {
   getCommentExportUrl
 } from '@/api/comments'
 import { getCategories } from '@/api/videos'
+import { useCommentsStore } from '@/store/comments'
+
+const commentsStore = useCommentsStore()
 
 // ========== 模式切换 ==========
 const analysisMode = ref('single')
@@ -1062,11 +1065,80 @@ watch(analysisMode, (newMode) => {
   disposeCharts()
 })
 
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  commentsStore.analysisMode = analysisMode.value
+  commentsStore.selectedCategory = selectedCategory.value
+  commentsStore.orderBy = orderBy.value
+  commentsStore.searchKeyword = searchKeyword.value
+  commentsStore.videos = videos.value
+  commentsStore.totalVideos = totalVideos.value
+  commentsStore.currentPage = currentPage.value
+  commentsStore.categoryOptions = categoryOptions.value
+  commentsStore.selectedVideo = selectedVideo.value
+  commentsStore.commentStats = commentStats.value
+  commentsStore.audienceProfile = audienceProfile.value
+  commentsStore.topComments = topComments.value
+  commentsStore.wordcloudData = wordcloudData.value
+  commentsStore.commentList = commentList.value
+  commentsStore.commentTotal = commentTotal.value
+  commentsStore.commentPage = commentPage.value
+  commentsStore.commentSentimentFilter = commentSentimentFilter.value
+  commentsStore.commentEmotionFilter = commentEmotionFilter.value
+  commentsStore.commentSortBy = commentSortBy.value
+  commentsStore.compareResult = compareResult.value
+  commentsStore.selectedBvids = selectedBvids.value
+  commentsStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = async () => {
+  analysisMode.value = commentsStore.analysisMode
+  selectedCategory.value = commentsStore.selectedCategory
+  orderBy.value = commentsStore.orderBy
+  searchKeyword.value = commentsStore.searchKeyword
+  videos.value = commentsStore.videos
+  totalVideos.value = commentsStore.totalVideos
+  currentPage.value = commentsStore.currentPage
+  categoryOptions.value = commentsStore.categoryOptions
+  selectedVideo.value = commentsStore.selectedVideo
+  commentStats.value = commentsStore.commentStats
+  audienceProfile.value = commentsStore.audienceProfile
+  topComments.value = commentsStore.topComments
+  wordcloudData.value = commentsStore.wordcloudData
+  commentList.value = commentsStore.commentList
+  commentTotal.value = commentsStore.commentTotal
+  commentPage.value = commentsStore.commentPage
+  commentSentimentFilter.value = commentsStore.commentSentimentFilter
+  commentEmotionFilter.value = commentsStore.commentEmotionFilter
+  commentSortBy.value = commentsStore.commentSortBy
+  compareResult.value = commentsStore.compareResult
+  selectedBvids.value = commentsStore.selectedBvids
+
+  await nextTick()
+  if (analysisMode.value === 'single' && commentStats.value) {
+    renderPieChart()
+    renderWordcloudChart()
+    renderEmotionBarChart()
+    renderAudienceProfileCharts()
+  } else if (analysisMode.value === 'compare' && compareResult.value) {
+    renderCompareBarChart()
+    renderCompareRadarChart()
+  }
+}
+
 // ========== 生命周期 ==========
-onMounted(() => {
-  loadCategories()
-  loadVideos()
+onMounted(async () => {
   window.addEventListener('resize', handleResize)
+  if (commentsStore.isFresh && commentsStore.videos.length > 0) {
+    await restoreFromStore()
+  } else {
+    loadCategories()
+    loadVideos()
+  }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
 })
 
 onUnmounted(() => {

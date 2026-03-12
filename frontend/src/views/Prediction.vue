@@ -328,7 +328,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onUnmounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Check, Right } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
@@ -338,6 +338,9 @@ import {
   getModelInfo
 } from '@/api/ml'
 import { getVideos, getCategories } from '@/api/videos'
+import { usePredictionStore } from '@/store/prediction'
+
+const predictionStore = usePredictionStore()
 
 // ========== 模型状态 ==========
 const modelInfo = ref({ predictor: {}, recommender: {} })
@@ -615,12 +618,56 @@ const handleResize = () => {
   featureChart?.resize()
 }
 
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  predictionStore.selectedCategory = selectedCategory.value
+  predictionStore.orderBy = orderBy.value
+  predictionStore.searchKeyword = searchKeyword.value
+  predictionStore.videos = videos.value
+  predictionStore.totalVideos = totalVideos.value
+  predictionStore.currentPage = currentPage.value
+  predictionStore.categoryOptions = categoryOptions.value
+  predictionStore.modelInfo = modelInfo.value
+  predictionStore.selectedVideo = selectedVideo.value
+  predictionStore.predictionResult = predictionResult.value
+  predictionStore.recommendResult = recommendResult.value
+  predictionStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = async () => {
+  selectedCategory.value = predictionStore.selectedCategory
+  orderBy.value = predictionStore.orderBy
+  searchKeyword.value = predictionStore.searchKeyword
+  videos.value = predictionStore.videos
+  totalVideos.value = predictionStore.totalVideos
+  currentPage.value = predictionStore.currentPage
+  categoryOptions.value = predictionStore.categoryOptions
+  modelInfo.value = predictionStore.modelInfo
+  selectedVideo.value = predictionStore.selectedVideo
+  predictionResult.value = predictionStore.predictionResult
+  recommendResult.value = predictionStore.recommendResult
+
+  if (predictionResult.value?.success && predictionResult.value?.feature_importance
+      && Object.keys(predictionResult.value.feature_importance).length > 0) {
+    await nextTick()
+    renderFeatureChart(predictionResult.value.feature_importance)
+  }
+}
+
 // ========== 生命周期 ==========
-onMounted(() => {
-  loadModelInfo()
-  loadCategories()
-  loadVideos()
+onMounted(async () => {
   window.addEventListener('resize', handleResize)
+  if (predictionStore.isFresh && predictionStore.videos.length > 0) {
+    await restoreFromStore()
+  } else {
+    loadModelInfo()
+    loadCategories()
+    loadVideos()
+  }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
 })
 
 onUnmounted(() => {

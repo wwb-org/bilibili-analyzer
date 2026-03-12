@@ -267,7 +267,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   DataAnalysis, Promotion, Trophy, PriceTag, EditPen, Star,
@@ -280,6 +280,9 @@ import {
   getTitleSuggestions,
   scoreTitle,
 } from '@/api/content_planner'
+import { useContentPlannerStore } from '@/store/contentPlanner'
+
+const plannerStore = useContentPlannerStore()
 
 const categories = ref([])
 const selectedCategory = ref('')
@@ -321,13 +324,45 @@ const scoreColor = (score) => {
   return '#F56C6C'
 }
 
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  plannerStore.selectedCategory = selectedCategory.value
+  plannerStore.categories = categories.value
+  plannerStore.analysisReady = analysisReady.value
+  plannerStore.features = features.value
+  plannerStore.keywords = keywords.value
+  plannerStore.suggestions = suggestions.value
+  plannerStore.inputTitle = inputTitle.value
+  plannerStore.scoreResult = scoreResult.value
+  plannerStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = () => {
+  selectedCategory.value = plannerStore.selectedCategory
+  categories.value = plannerStore.categories
+  analysisReady.value = plannerStore.analysisReady
+  features.value = plannerStore.features
+  keywords.value = plannerStore.keywords
+  suggestions.value = plannerStore.suggestions
+  inputTitle.value = plannerStore.inputTitle
+  scoreResult.value = plannerStore.scoreResult
+}
+
 onMounted(async () => {
-  try {
-    const res = await getCategories()
-    categories.value = res.categories || []
-  } catch {
-    categories.value = []
+  if (plannerStore.isFresh && plannerStore.categories.length > 0) {
+    restoreFromStore()
+  } else {
+    try {
+      const res = await getCategories()
+      categories.value = res.categories || []
+    } catch {
+      categories.value = []
+    }
   }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
 })
 
 const onCategoryChange = () => {
