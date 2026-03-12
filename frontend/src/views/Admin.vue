@@ -807,7 +807,7 @@ BV1zz4y1c7mZ
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Connection,
@@ -854,6 +854,9 @@ import {
   trainRecommender,
   trainAllModels
 } from '@/api/ml'
+import { useAdminStore } from '@/store/admin'
+
+const adminStore = useAdminStore()
 
 // ========== 状态 ==========
 const redisStatus = ref(false)
@@ -903,6 +906,7 @@ const weeklyCrawlLoading = ref(false)
 
 
 const usersLoading = ref(false)
+const users = ref([])
 
 const showBackfillDialog = ref(false)
 const backfillLoading = ref(false)
@@ -1494,15 +1498,47 @@ const getStatusText = (status) => {
   return map[status] || status
 }
 
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  adminStore.redisStatus = redisStatus.value
+  adminStore.kafkaStatus = kafkaStatus.value
+  adminStore.bilibiliStatus = { ...bilibiliStatus.value }
+  adminStore.etlStatus = { ...etlStatus.value }
+  adminStore.crawlLogs = crawlLogs.value
+  adminStore.users = users.value
+  adminStore.modelInfo = { ...modelInfo.value }
+  adminStore.dataOverview = dataOverview.value
+  adminStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = () => {
+  redisStatus.value = adminStore.redisStatus
+  kafkaStatus.value = adminStore.kafkaStatus
+  bilibiliStatus.value = { ...adminStore.bilibiliStatus }
+  etlStatus.value = { ...adminStore.etlStatus }
+  crawlLogs.value = adminStore.crawlLogs
+  users.value = adminStore.users
+  modelInfo.value = { ...adminStore.modelInfo }
+  dataOverview.value = adminStore.dataOverview
+}
+
 // ========== 生命周期 ==========
 onMounted(() => {
-  fetchServicesStatus()
-  fetchBilibiliStatus()
-  fetchETLStatus()
-  fetchCrawlLogs()
-  fetchUsers()
-  fetchModelInfo()
-  fetchDataOverview()
+  if (adminStore.isFresh) {
+    restoreFromStore()
+  } else {
+    fetchServicesStatus()
+    fetchBilibiliStatus()
+    fetchETLStatus()
+    fetchCrawlLogs()
+    fetchUsers()
+    fetchModelInfo()
+    fetchDataOverview()
+  }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
 })
 
 onUnmounted(() => {
