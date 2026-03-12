@@ -5,6 +5,7 @@
 from datetime import date, datetime
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 import logging
 
 from app.services.crawler import BilibiliCrawler
@@ -277,7 +278,7 @@ class CrawlService:
                     emotion_result = self.crawler.emotion.analyze_emotion(content)
                     profile = self.crawler.parse_comment_user_profile(comment_raw)
 
-                    # 创建评论记录
+                    # 创建评论记录，使用 SAVEPOINT 防止重复键冲突丢失整批数据
                     comment = Comment(
                         rpid=rpid,
                         video_id=video_id,
@@ -298,8 +299,13 @@ class CrawlService:
                         up_replied=profile["up_replied"],
                         comment_ctime=profile["comment_ctime"],
                     )
-                    db.add(comment)
-                    saved_count += 1
+                    try:
+                        nested = db.begin_nested()
+                        db.add(comment)
+                        db.flush()
+                        saved_count += 1
+                    except IntegrityError:
+                        nested.rollback()
 
                     # 每20条提交一次
                     if saved_count % 20 == 0:
