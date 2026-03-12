@@ -35,7 +35,7 @@
       <div class="card-header-line">
         <div class="section-num">01</div>
         <h3 class="card-title">内容竞争地图</h3>
-        <span class="card-desc">X=播放量 &nbsp;Y=互动率 &nbsp;大小=评论数 &nbsp;颜色=分区</span>
+        <span class="card-desc">X=播放量 &nbsp;Y=互动率 &nbsp;大小=评论数 &nbsp;颜色=互动热度</span>
         <div class="quadrant-legend">
           <span class="ql-item ql-hot">爆款</span>
           <span class="ql-item ql-potential">潜力视频</span>
@@ -320,44 +320,39 @@ const initBubble = (videos) => {
   if (!bubbleRef.value || !videos.length) return
   if (!bubbleChart) bubbleChart = echarts.init(bubbleRef.value)
 
-  const catSet = [...new Set(videos.map(v => v.category))]
   // 计算中位数用于四象限划分
   const sortedPlay = [...videos].sort((a, b) => a.play_count - b.play_count)
   const sortedIR   = [...videos].sort((a, b) => a.interaction_rate - b.interaction_rate)
   const midX = sortedPlay[Math.floor(sortedPlay.length / 2)]?.play_count || 0
   const midY = sortedIR[Math.floor(sortedIR.length / 2)]?.interaction_rate || 0
+  const maxIR = sortedIR[sortedIR.length - 1]?.interaction_rate || 1
 
-  const series = catSet.map(cat => ({
-    name: cat,
-    type: 'scatter',
-    data: videos
-      .filter(v => v.category === cat)
-      .map(v => [v.play_count, v.interaction_rate, v.comment_count || 1, v.title]),
-    symbolSize: d => Math.max(5, Math.min(36, Math.sqrt(d[2] || 50) * 0.6)),
-    itemStyle: { color: CATEGORY_COLORS[cat] || '#9499A0', opacity: 0.72 },
-  }))
-
-  // 四象限分割线挂在第一个 series 上
-  if (series.length > 0) {
-    series[0].markLine = {
-      silent: true,
-      lineStyle: { color: '#C9CCD0', type: 'dashed', width: 1 },
-      data: [{ xAxis: midX }, { yAxis: midY }],
-    }
-  }
+  // 合并为单一 series，使用 visualMap 蓝粉渐变
+  const allData = videos.map(v => [
+    v.play_count,
+    v.interaction_rate,
+    v.comment_count || 1,
+    v.title,
+    v.category || '其他',
+  ])
 
   bubbleChart.setOption({
     tooltip: {
       formatter: p => {
-        const [x, y, c, t] = p.data
-        return `${t}<br/>播放量 ${formatLarge(x)}<br/>互动率 ${y.toFixed(2)}%<br/>评论数 ${formatLarge(c)}`
+        const [x, y, c, t, cat] = p.data
+        return `<b>${t}</b><br/>分区 ${cat}<br/>播放量 ${formatLarge(x)}<br/>互动率 ${y.toFixed(2)}%<br/>评论数 ${formatLarge(c)}`
       },
     },
-    legend: {
-      type: 'scroll', bottom: 0, itemWidth: 10, itemHeight: 10,
-      textStyle: { fontSize: 11, color: '#61666D' },
+    visualMap: {
+      show: false,
+      dimension: 1,
+      min: 0,
+      max: maxIR,
+      inRange: {
+        color: ['#00A1D6', '#8BC7E8', '#D4A5C0', '#FB7299'],
+      },
     },
-    grid: { top: 32, right: 16, bottom: 56, left: 60 },
+    grid: { top: 32, right: 16, bottom: 32, left: 60 },
     xAxis: {
       name: '播放量', nameTextStyle: { color:'#9499A0', fontSize:11 },
       axisLabel: { color:'#9499A0', fontSize:10, formatter: v => formatLarge(v) },
@@ -369,12 +364,30 @@ const initBubble = (videos) => {
       splitLine: { lineStyle: { color:'#F4F4F4' } },
     },
     graphic: [
-      { type:'text', left:'74%', top:8,     style:{ text:'🔥 爆款区',   fill:'#00A1D6', fontSize:11, fontWeight:'bold' } },
+      { type:'text', left:'74%', top:8,     style:{ text:'🔥 爆款区',   fill:'#FB7299', fontSize:11, fontWeight:'bold' } },
       { type:'text', left:'4%',  top:8,     style:{ text:'🌱 潜力视频', fill:'#00B578', fontSize:11, fontWeight:'bold' } },
-      { type:'text', left:'74%', bottom:60, style:{ text:'📢 标题党',   fill:'#FF9736', fontSize:11, fontWeight:'bold' } },
-      { type:'text', left:'4%',  bottom:60, style:{ text:'😐 普通',     fill:'#9499A0', fontSize:11 } },
+      { type:'text', left:'74%', bottom:36, style:{ text:'📢 标题党',   fill:'#FF9736', fontSize:11, fontWeight:'bold' } },
+      { type:'text', left:'4%',  bottom:36, style:{ text:'😐 普通',     fill:'#9499A0', fontSize:11 } },
     ],
-    series,
+    series: [{
+      type: 'scatter',
+      data: allData,
+      symbolSize: d => Math.max(8, Math.min(40, Math.sqrt(d[2] || 50) * 0.7)),
+      itemStyle: {
+        opacity: 0.78,
+        borderColor: '#fff',
+        borderWidth: 1,
+      },
+      emphasis: {
+        itemStyle: { opacity: 1, borderWidth: 2 },
+      },
+      markLine: {
+        silent: true,
+        lineStyle: { color: '#E7E7E7', type: 'dashed', width: 1 },
+        data: [{ xAxis: midX }, { yAxis: midY }],
+        label: { show: false },
+      },
+    }],
     animationDuration: 800,
   })
 }

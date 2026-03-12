@@ -507,7 +507,7 @@ BV1zz4y1c7mZ
       <div class="panel-header">
         <div class="panel-title-group">
           <h3 class="panel-title">机器学习模型</h3>
-          <span class="panel-subtitle">热度预测与相似推荐模型管理</span>
+          <span class="panel-subtitle">热度预测、投币预测与相似推荐模型管理</span>
         </div>
         <el-button text type="primary" @click="fetchModelInfo">
           <el-icon><Refresh /></el-icon>
@@ -586,6 +586,41 @@ BV1zz4y1c7mZ
               {{ modelInfo.recommender?.loaded ? '重新训练' : '训练模型' }}
             </el-button>
           </div>
+
+          <div class="model-card">
+            <div class="model-card-header">
+              <el-icon class="model-icon" :class="{ 'is-loaded': modelInfo.predictor?.coin_model_loaded }">
+                <Coin />
+              </el-icon>
+              <div class="model-info">
+                <span class="model-name">投币预测模型</span>
+                <el-tag v-if="modelInfo.predictor?.coin_model_loaded" type="success" size="small">已加载</el-tag>
+                <el-tag v-else type="warning" size="small">未加载</el-tag>
+              </div>
+            </div>
+            <div class="model-details" v-if="modelInfo.predictor?.coin_model_loaded">
+              <div class="detail-item">
+                <span class="detail-label">模型类型</span>
+                <span class="detail-value">XGBoost</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">特征数量</span>
+                <span class="detail-value">{{ modelInfo.predictor?.feature_count || '-' }}</span>
+              </div>
+            </div>
+            <div class="model-details" v-else>
+              <p class="no-model-hint">模型尚未训练，请点击下方按钮训练</p>
+            </div>
+            <el-button
+              type="primary"
+              :loading="trainCoinPredictorLoading"
+              @click="handleTrainCoinPredictor"
+              class="train-btn"
+            >
+              <el-icon><Cpu /></el-icon>
+              {{ modelInfo.predictor?.coin_model_loaded ? '重新训练' : '训练模型' }}
+            </el-button>
+          </div>
         </div>
 
         <!-- 一键训练 -->
@@ -618,6 +653,14 @@ BV1zz4y1c7mZ
                 ({{ lastTrainResult.predictor.train_samples }} 样本, R²={{ lastTrainResult.predictor.test_r2?.toFixed(3) }})
               </span>
             </el-descriptions-item>
+            <el-descriptions-item label="投币模型">
+              <el-tag v-if="lastTrainResult.coin_predictor?.success" type="success" size="small">成功</el-tag>
+              <el-tag v-else-if="lastTrainResult.coin_predictor" type="danger" size="small">失败</el-tag>
+              <el-tag v-else type="info" size="small">未训练</el-tag>
+              <span v-if="lastTrainResult.coin_predictor?.train_samples" class="result-detail">
+                ({{ lastTrainResult.coin_predictor.train_samples }} 样本, R²={{ lastTrainResult.coin_predictor.test_r2?.toFixed(3) }})
+              </span>
+            </el-descriptions-item>
             <el-descriptions-item label="推荐模型">
               <el-tag v-if="lastTrainResult.recommender?.success" type="success" size="small">成功</el-tag>
               <el-tag v-else type="danger" size="small">失败</el-tag>
@@ -625,9 +668,9 @@ BV1zz4y1c7mZ
                 ({{ lastTrainResult.recommender.video_count }} 视频)
               </span>
             </el-descriptions-item>
-            <el-descriptions-item label="错误信息" v-if="lastTrainResult.predictor?.error || lastTrainResult.recommender?.error">
+            <el-descriptions-item label="错误信息" v-if="lastTrainResult.predictor?.error || lastTrainResult.coin_predictor?.error || lastTrainResult.recommender?.error">
               <el-text type="danger" size="small">
-                {{ lastTrainResult.predictor?.error || lastTrainResult.recommender?.error }}
+                {{ lastTrainResult.predictor?.error || lastTrainResult.coin_predictor?.error || lastTrainResult.recommender?.error }}
               </el-text>
             </el-descriptions-item>
           </el-descriptions>
@@ -768,6 +811,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Connection,
+  Coin,
   DataLine,
   Message,
   Timer,
@@ -806,6 +850,7 @@ import {
 import {
   getModelInfo,
   trainPredictor,
+  trainCoinPredictor,
   trainRecommender,
   trainAllModels
 } from '@/api/ml'
@@ -878,6 +923,7 @@ const cookieVerifyResult = ref(null)
 // ML 模型管理
 const modelInfo = ref({ predictor: {}, recommender: {} })
 const trainPredictorLoading = ref(false)
+const trainCoinPredictorLoading = ref(false)
 const trainRecommenderLoading = ref(false)
 const trainAllLoading = ref(false)
 const lastTrainResult = ref(null)
@@ -1293,6 +1339,35 @@ const handleTrainRecommender = async () => {
   }
 }
 
+const handleTrainCoinPredictor = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要训练投币预测模型吗？训练需要一定时间。',
+      '确认训练',
+      { type: 'info' }
+    )
+
+    trainCoinPredictorLoading.value = true
+    const res = await trainCoinPredictor()
+
+    if (res.success) {
+      ElMessage.success('投币预测模型训练成功')
+      lastTrainResult.value = { coin_predictor: res, trained_at: res.trained_at }
+    } else {
+      ElMessage.error('训练失败: ' + (res.error || '未知错误'))
+      lastTrainResult.value = { coin_predictor: res }
+    }
+
+    await fetchModelInfo()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('训练失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    trainCoinPredictorLoading.value = false
+  }
+}
+
 const handleTrainAll = async () => {
   try {
     await ElMessageBox.confirm(
@@ -1306,9 +1381,9 @@ const handleTrainAll = async () => {
 
     lastTrainResult.value = res
 
-    if (res.predictor?.success && res.recommender?.success) {
+    if (res.predictor?.success && res.coin_predictor?.success && res.recommender?.success) {
       ElMessage.success('所有模型训练成功')
-    } else if (res.predictor?.success || res.recommender?.success) {
+    } else if (res.predictor?.success || res.coin_predictor?.success || res.recommender?.success) {
       ElMessage.warning('部分模型训练成功，请查看详情')
     } else {
       ElMessage.error('模型训练失败，请查看详情')
@@ -1722,7 +1797,7 @@ onUnmounted(() => {
 /* ML 模型管理样式 */
 .model-status-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
   margin-bottom: 24px;
 }
@@ -1828,6 +1903,10 @@ onUnmounted(() => {
 
 @media (max-width: 1000px) {
   .status-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .model-status-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }

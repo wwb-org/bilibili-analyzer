@@ -35,6 +35,10 @@ class User(Base):
     role = Column(String(20), default=UserRole.USER)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    bilibili_uid = Column(BigInteger, nullable=True)
+    bilibili_name = Column(String(100), nullable=True)
+    bilibili_avatar = Column(String(500), nullable=True)
+    bilibili_sign = Column(String(500), nullable=True)
 
 
 class Video(Base):

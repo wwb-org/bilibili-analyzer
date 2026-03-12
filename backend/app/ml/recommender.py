@@ -139,7 +139,7 @@ class VideoRecommender:
         # 计算余弦相似度
         similarities = cosine_similarity(target_vector, self.tfidf_matrix).flatten()
 
-        # 获取相似度排名
+        # 获取相似度排名（降序）
         similar_indices = similarities.argsort()[::-1]
 
         # 查询候选视频
@@ -153,7 +153,7 @@ class VideoRecommender:
                 continue
 
             similarity_score = float(similarities[idx])
-            if similarity_score < 0.01:  # 相似度过低的跳过
+            if similarity_score <= 0:  # 只跳过完全无关的
                 continue
 
             candidates.append({
@@ -161,10 +161,24 @@ class VideoRecommender:
                 "title_similarity": similarity_score
             })
 
+        logger.info(f"TF-IDF 为 {bvid} 找到 {len(candidates)} 个候选")
+
+        # 如果 TF-IDF 没有找到候选，回退到简单推荐
+        if not candidates:
+            logger.warning(f"TF-IDF 未找到候选视频，回退到简单推荐: {bvid}")
+            return self._simple_recommend(target_video, db, top_k)
+
         # 获取完整视频信息
         candidate_bvids = [c["bvid"] for c in candidates]
         videos = db.query(Video).filter(Video.bvid.in_(candidate_bvids)).all()
         video_map = {v.bvid: v for v in videos}
+
+        logger.info(f"数据库中匹配到 {len(video_map)}/{len(candidate_bvids)} 个候选视频")
+
+        # 如果索引中的视频在数据库中都找不到，回退到简单推荐
+        if not video_map:
+            logger.warning(f"索引中的视频在数据库中不存在，回退到简单推荐: {bvid}")
+            return self._simple_recommend(target_video, db, top_k)
 
         # 多维度评分
         results = []
@@ -196,6 +210,38 @@ class VideoRecommender:
                 "same_category": video.category == target_video.category,
                 "same_author": video.author_id == target_video.author_id
             })
+
+        # 如果同作者过滤后没有结果，放宽条件重试
+        if not results and not include_same_author:
+            logger.info(f"同作者过滤后无结果，放宽条件重试: {bvid}")
+            for candidate in candidates:
+                video = video_map.get(candidate["bvid"])
+                if not video or video.bvid == bvid:
+                    continue
+
+                score = self._calculate_multi_score(
+                    target_video, video, candidate["title_similarity"],
+                    include_same_category
+                )
+
+                results.append({
+                    "bvid": video.bvid,
+                    "title": video.title,
+                    "cover_url": video.cover_url,
+                    "author_name": video.author_name,
+                    "category": video.category,
+                    "play_count": video.play_count or 0,
+                    "like_count": video.like_count or 0,
+                    "similarity_score": round(score, 4),
+                    "title_similarity": round(candidate["title_similarity"], 4),
+                    "same_category": video.category == target_video.category,
+                    "same_author": video.author_id == target_video.author_id
+                })
+
+        # 仍然没有结果，回退到简单推荐
+        if not results:
+            logger.warning(f"TF-IDF 评分后无结果，回退到简单推荐: {bvid}")
+            return self._simple_recommend(target_video, db, top_k)
 
         # 按综合分数排序
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
