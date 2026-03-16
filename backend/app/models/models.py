@@ -39,6 +39,7 @@ class User(Base):
     bilibili_name = Column(String(100), nullable=True)
     bilibili_avatar = Column(String(500), nullable=True)
     bilibili_sign = Column(String(500), nullable=True)
+    avatar = Column(String(500), nullable=True)  # 用户自定义头像路径
 
 
 class Video(Base):

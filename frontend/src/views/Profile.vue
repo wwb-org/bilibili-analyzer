@@ -10,19 +10,54 @@
       <div class="left-col">
         <div class="card user-card">
           <!-- 头像 -->
-          <div class="avatar-area">
+          <div class="avatar-area" @click="triggerAvatarUpload">
             <img
-              v-if="user?.bilibili_avatar"
-              :src="user.bilibili_avatar"
+              v-if="avatarUrl"
+              :src="avatarUrl"
               class="avatar-img"
               referrerpolicy="no-referrer"
             />
             <div v-else class="avatar-letter" :class="isAdmin ? 'avatar-admin' : 'avatar-user'">
               {{ avatarLetter }}
             </div>
+            <div class="avatar-overlay">
+              <span>{{ uploading ? '上传中...' : '更换头像' }}</span>
+            </div>
+            <input
+              ref="avatarInput"
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              style="display: none"
+              @change="handleAvatarChange"
+            />
           </div>
           <!-- 用户名 + 角色 -->
-          <div class="user-name">{{ user?.username || '-' }}</div>
+          <div class="username-row">
+            <template v-if="editingName">
+              <input
+                ref="nameInput"
+                class="name-edit-input"
+                v-model="newUsername"
+                maxlength="20"
+                placeholder="2-20个字符"
+                @keyup.enter="handleSaveName"
+                @keyup.escape="editingName = false"
+              />
+              <button class="name-btn name-btn-save" @click="handleSaveName" :disabled="savingName">
+                {{ savingName ? '...' : '保存' }}
+              </button>
+              <button class="name-btn name-btn-cancel" @click="editingName = false">取消</button>
+            </template>
+            <template v-else>
+              <div class="user-name">{{ user?.username || '-' }}</div>
+              <button class="name-edit-icon" @click="startEditName" title="修改昵称">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+            </template>
+          </div>
           <span class="role-tag" :class="isAdmin ? 'role-admin' : 'role-user'">
             {{ isAdmin ? '管理员' : '普通用户' }}
           </span>
@@ -124,15 +159,100 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted, nextTick } from 'vue'
 import { useUserStore } from '@/store/user'
-import { changePassword, bindBilibili, unbindBilibili } from '@/api/auth'
+import { changePassword, bindBilibili, unbindBilibili, uploadAvatar, changeUsername } from '@/api/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const userStore = useUserStore()
 const user = computed(() => userStore.user)
 const isAdmin = computed(() => userStore.isAdmin)
 const avatarLetter = computed(() => (user.value?.username?.[0] || 'U').toUpperCase())
+
+// 头像 URL（优先级：自定义 > B站 > 无）
+const avatarUrl = computed(() => {
+  if (user.value?.avatar) return `/uploads/${user.value.avatar}`
+  if (user.value?.bilibili_avatar) return user.value.bilibili_avatar
+  return ''
+})
+
+// ====== 头像上传 ======
+const avatarInput = ref(null)
+const uploading = ref(false)
+
+const triggerAvatarUpload = () => {
+  if (!uploading.value) avatarInput.value?.click()
+}
+
+const handleAvatarChange = async (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.warning('头像文件不能超过 2MB')
+    return
+  }
+  if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)) {
+    ElMessage.warning('仅支持 JPG、PNG、GIF、WebP 格式')
+    return
+  }
+
+  uploading.value = true
+  try {
+    await uploadAvatar(file)
+    await userStore.fetchUser()
+    ElMessage.success('头像更新成功')
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '头像上传失败')
+  } finally {
+    uploading.value = false
+    e.target.value = ''
+  }
+}
+
+// ====== 修改昵称 ======
+const editingName = ref(false)
+const newUsername = ref('')
+const savingName = ref(false)
+const nameInput = ref(null)
+
+const startEditName = () => {
+  newUsername.value = user.value?.username || ''
+  editingName.value = true
+  nextTick(() => nameInput.value?.focus())
+}
+
+const handleSaveName = async () => {
+  const name = newUsername.value.trim()
+  if (!name || name.length < 2) {
+    ElMessage.warning('昵称长度不能少于2个字符')
+    return
+  }
+  if (name.length > 20) {
+    ElMessage.warning('昵称长度不能超过20个字符')
+    return
+  }
+  if (name === user.value?.username) {
+    editingName.value = false
+    return
+  }
+
+  savingName.value = true
+  try {
+    const res = await changeUsername({ new_username: name })
+    // 更新token（因为JWT的sub是username）
+    if (res.data?.access_token) {
+      userStore.setToken(res.data.access_token)
+    }
+    await userStore.fetchUser()
+    ElMessage.success('昵称修改成功')
+    editingName.value = false
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '昵称修改失败')
+  } finally {
+    savingName.value = false
+  }
+}
 
 // ====== B站绑定 ======
 const biliUid = ref('')
@@ -289,6 +409,8 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   margin-bottom: 12px;
+  position: relative;
+  cursor: pointer;
 }
 .avatar-img {
   width: 80px;
@@ -308,6 +430,28 @@ onMounted(() => {
   font-weight: 700;
   color: #fff;
 }
+.avatar-overlay {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.avatar-overlay span {
+  color: #fff;
+  font-size: 12px;
+}
+.avatar-area:hover .avatar-overlay {
+  opacity: 1;
+}
 .avatar-user {
   background-color: var(--bili-blue);
 }
@@ -319,7 +463,70 @@ onMounted(() => {
   font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.username-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   margin-bottom: 8px;
+  min-height: 28px;
+}
+.name-edit-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-placeholder);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.1s;
+}
+.name-edit-icon:hover {
+  color: var(--bili-blue);
+  background: var(--bili-blue-light);
+}
+.name-edit-input {
+  width: 120px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--bili-blue);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+  outline: none;
+  text-align: center;
+}
+.name-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.name-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.name-btn-save {
+  background: var(--bili-blue);
+  color: #fff;
+}
+.name-btn-save:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.name-btn-cancel {
+  background: var(--bg-gray);
+  color: var(--text-secondary);
+}
+.name-btn-cancel:hover {
+  background: var(--border-light);
 }
 .role-tag {
   display: inline-block;

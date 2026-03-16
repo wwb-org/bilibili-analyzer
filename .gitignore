@@ -80,5 +80,8 @@ htmlcov/
 # Redis dump
 dump.rdb
 
+# User uploads
+backend/uploads/
+
 frontend/package-lock.json
 .claude/settings.local.json

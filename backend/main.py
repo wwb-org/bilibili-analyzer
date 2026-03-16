@@ -3,9 +3,11 @@ B站视频内容趋势分析系统 - 后端入口
 """
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, videos, statistics, admin, live, ml, comments, keywords, content_planner
 from app.core.config import settings
@@ -34,8 +36,23 @@ async def lifespan(app: FastAPI):
     # 启动时执行
     logger.info("应用启动中...")
 
-    # 修复上次意外中断遗留的 running 状态日志
+    # 自动迁移：确保 users 表有 avatar 列
+    from sqlalchemy import text, inspect
     from app.core.database import SessionLocal
+    _db = SessionLocal()
+    try:
+        inspector = inspect(engine)
+        columns = [c['name'] for c in inspector.get_columns('users')]
+        if 'avatar' not in columns:
+            _db.execute(text("ALTER TABLE users ADD COLUMN avatar VARCHAR(500) NULL"))
+            _db.commit()
+            logger.info("自动迁移：users 表添加 avatar 列")
+    except Exception as e:
+        logger.warning(f"自动迁移检查失败: {e}")
+    finally:
+        _db.close()
+
+    # 修复上次意外中断遗留的 running 状态日志
     from app.models.models import CrawlLog
     from datetime import datetime
     _db = SessionLocal()
@@ -91,6 +108,11 @@ app.include_router(ml.router, prefix="/api/ml", tags=["机器学习"])
 app.include_router(comments.router, prefix="/api/comments", tags=["评论分析"])
 app.include_router(keywords.router, prefix="/api/keywords", tags=["热词分析"])
 app.include_router(content_planner.router, prefix="/api/content-planner", tags=["内容策划"])
+
+# 创建上传目录并挂载静态文件服务
+upload_dir = os.path.join(os.path.dirname(__file__), "uploads", "avatars")
+os.makedirs(upload_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "uploads")), name="uploads")
 
 
 @app.get("/")

@@ -1,9 +1,11 @@
 """
 用户认证API
 """
+import os
+import time
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
@@ -36,6 +38,7 @@ class UserResponse(BaseModel):
     email: str
     role: str
     created_at: Optional[datetime] = None
+    avatar: Optional[str] = None
     bilibili_uid: Optional[int] = None
     bilibili_name: Optional[str] = None
     bilibili_avatar: Optional[str] = None
@@ -58,6 +61,10 @@ class LoginRequest(BaseModel):
 class PasswordChange(BaseModel):
     old_password: str
     new_password: str
+
+
+class UsernameChange(BaseModel):
+    new_username: str
 
 
 class BindBilibiliRequest(BaseModel):
@@ -158,6 +165,41 @@ def change_password(
     return {"message": "密码修改成功"}
 
 
+@router.put("/username")
+def change_username(
+    data: UsernameChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """修改昵称"""
+    new_name = data.new_username.strip()
+    if not new_name or len(new_name) < 2:
+        raise HTTPException(status_code=400, detail="昵称长度不能少于2个字符")
+    if len(new_name) > 20:
+        raise HTTPException(status_code=400, detail="昵称长度不能超过20个字符")
+
+    # 检查是否与当前相同
+    if new_name == current_user.username:
+        raise HTTPException(status_code=400, detail="新昵称与当前相同")
+
+    # 检查是否已被占用
+    existing = db.query(User).filter(User.username == new_name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该昵称已被占用")
+
+    current_user.username = new_name
+    db.commit()
+    db.refresh(current_user)
+
+    # 重新签发token（因为JWT的sub是username）
+    access_token = create_access_token(
+        data={"sub": current_user.username},
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {"message": "昵称修改成功", "access_token": access_token}
+
+
 @router.put("/bind-bilibili")
 def bind_bilibili(
     data: BindBilibiliRequest,
@@ -205,3 +247,55 @@ def unbind_bilibili(
     db.commit()
 
     return {"message": "已解绑B站账号"}
+
+
+@router.post("/avatar", response_model=UserResponse)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """上传/更换头像"""
+    # 校验文件扩展名
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in settings.AVATAR_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件格式，允许: {', '.join(settings.AVATAR_ALLOWED_EXTENSIONS)}"
+        )
+
+    # 校验 content_type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="请上传图片文件")
+
+    # 读取并校验大小
+    content = await file.read()
+    if len(content) > settings.AVATAR_MAX_SIZE:
+        raise HTTPException(status_code=400, detail="头像文件不能超过2MB")
+
+    # 删除旧头像文件
+    if current_user.avatar:
+        old_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "uploads", current_user.avatar
+        )
+        if os.path.exists(old_path):
+            os.remove(old_path)
+
+    # 保存新文件
+    filename = f"{current_user.id}_{int(time.time())}.{ext}"
+    save_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "uploads", "avatars"
+    )
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, filename)
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    # 更新数据库
+    current_user.avatar = f"avatars/{filename}"
+    db.commit()
+    db.refresh(current_user)
+
+    return current_user
