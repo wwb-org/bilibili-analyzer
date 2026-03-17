@@ -407,7 +407,7 @@ const initLifecycle = (data) => {
       trigger: 'axis',
       formatter: p => `发布后第 ${p[0].axisValue} 天<br/>平均播放量 ${formatLarge(p[0].value)}`,
     },
-    grid: { top: 24, right: 16, bottom: 28, left: 60 },
+    grid: { top: 32, right: 16, bottom: 28, left: 60 },
     xAxis: {
       type: 'category',
       data: data.map(d => d.day + '天'),
@@ -443,7 +443,7 @@ const initCategory = (cats) => {
   if (!categoryRef.value || !cats.length) return
   if (!categoryChart) categoryChart = echarts.init(categoryRef.value)
 
-  const sorted = [...cats].sort((a, b) => b.avg_interaction_rate - a.avg_interaction_rate).slice(0, 12)
+  const sorted = [...cats].sort((a, b) => b.avg_interaction_rate - a.avg_interaction_rate).slice(0, 8)
   const names  = sorted.map(c => c.category)
   const plays  = sorted.map(c => Math.round(c.avg_play_count))
   const rates  = sorted.map(c => parseFloat(c.avg_interaction_rate?.toFixed(2) || 0))
@@ -458,7 +458,7 @@ const initCategory = (cats) => {
       bottom: 0, itemWidth: 12, itemHeight: 8,
       textStyle: { fontSize: 11, color: '#61666D' },
     },
-    grid: { top: 12, right: 56, bottom: 44, left: 60 },
+    grid: { top: 32, right: 56, bottom: 44, left: 72 },
     xAxis: [
       {
         type: 'value', name: '均播放量',
@@ -482,7 +482,7 @@ const initCategory = (cats) => {
         name: '均播放量', type: 'bar', xAxisIndex: 0,
         data: plays,
         itemStyle: { color: '#00A1D6', borderRadius: [0,3,3,0] },
-        barMaxWidth: 14,
+        barMaxWidth: 18,
       },
       {
         name: '互动率(%)', type: 'scatter', xAxisIndex: 1,
