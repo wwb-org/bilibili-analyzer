@@ -661,3 +661,60 @@ def get_data_overview(
         },
         "daily_details": daily_details,
     }
+
+
+@router.post("/fix-categories")
+def fix_categories(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    批量修复已有视频的分区：将子分区映射为主分区
+
+    同时更新 videos 表和数仓 DWD/DWS 表中的 category 字段
+    """
+    from app.services.crawler import BilibiliCrawler
+
+    mapping = BilibiliCrawler.SUBCATEGORY_MAP
+    updated = 0
+
+    # 更新 videos 表
+    for sub, main in mapping.items():
+        count = db.query(Video).filter(Video.category == sub).update(
+            {Video.category: main}, synchronize_session=False
+        )
+        updated += count
+
+    # 更新 DWD 快照表
+    dwd_snap_updated = 0
+    for sub, main in mapping.items():
+        count = db.query(DwdVideoSnapshot).filter(
+            DwdVideoSnapshot.category == sub
+        ).update({DwdVideoSnapshot.category: main}, synchronize_session=False)
+        dwd_snap_updated += count
+
+    # 更新 DWD 评论表
+    dwd_comment_updated = 0
+    for sub, main in mapping.items():
+        count = db.query(DwdCommentDaily).filter(
+            DwdCommentDaily.category == sub
+        ).update({DwdCommentDaily.category: main}, synchronize_session=False)
+        dwd_comment_updated += count
+
+    # 更新 DWS 分区统计表
+    dws_cat_updated = 0
+    for sub, main in mapping.items():
+        count = db.query(DwsCategoryDaily).filter(
+            DwsCategoryDaily.category == sub
+        ).update({DwsCategoryDaily.category: main}, synchronize_session=False)
+        dws_cat_updated += count
+
+    db.commit()
+
+    return {
+        "message": "分区映射修复完成",
+        "videos_updated": updated,
+        "dwd_snapshot_updated": dwd_snap_updated,
+        "dwd_comment_updated": dwd_comment_updated,
+        "dws_category_updated": dws_cat_updated,
+    }

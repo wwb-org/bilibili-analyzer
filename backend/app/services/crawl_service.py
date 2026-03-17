@@ -107,6 +107,8 @@ class CrawlService:
 
                     # 从列表数据获取分区信息（详情API不返回分区名）
                     category_from_list = video_raw.get('tname', '') or video_raw.get('tnamev2', '')
+                    # 映射子分区为主分区
+                    category_from_list = self.crawler.map_category(category_from_list)
 
                     # 获取视频详情（用于获取cid、aid等）
                     detail = self.crawler.get_video_detail(bvid)

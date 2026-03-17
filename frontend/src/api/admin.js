@@ -148,3 +148,10 @@ export const startWeeklyCrawl = (config) => {
 export const getDataOverview = () => {
   return api.get('/admin/data-overview')
 }
+
+/**
+ * 修复已有视频分区（子分区→主分区映射）
+ */
+export const fixCategories = () => {
+  return api.post('/admin/fix-categories')
+}
