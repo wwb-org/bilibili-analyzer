@@ -338,7 +338,8 @@ class BilibiliCrawler:
             # 检查视频是否已存在
             existing = db.query(Video).filter(Video.bvid == video_data['bvid']).first()
             if existing:
-                # 更新统计数据
+                # 更新统计数据和标题
+                existing.title = video_data['title']
                 existing.play_count = video_data['play_count']
                 existing.like_count = video_data['like_count']
                 existing.coin_count = video_data['coin_count']
@@ -346,8 +347,10 @@ class BilibiliCrawler:
                 existing.favorite_count = video_data['favorite_count']
                 existing.danmaku_count = video_data['danmaku_count']
                 existing.comment_count = video_data['comment_count']
+                existing.cover_url = video_data.get('cover_url')
                 db.commit()
                 db.refresh(existing)
+                print(f"  [更新] {video_data['bvid']} 播放:{existing.play_count} 点赞:{existing.like_count}")
                 return existing
 
             # 转换时间戳为 datetime

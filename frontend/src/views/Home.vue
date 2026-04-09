@@ -372,9 +372,9 @@ const initBubble = (videos) => {
     series: [{
       type: 'scatter',
       data: allData,
-      symbolSize: d => Math.max(8, Math.min(40, Math.sqrt(d[2] || 50) * 0.7)),
+      symbolSize: d => Math.max(5, Math.min(26, Math.sqrt(d[2] || 50) * 0.45)),
       itemStyle: {
-        opacity: 0.78,
+        opacity: 0.68,
         borderColor: '#fff',
         borderWidth: 1,
       },

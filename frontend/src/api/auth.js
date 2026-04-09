@@ -12,7 +12,7 @@ export const uploadAvatar = (file) => {
   const formData = new FormData()
   formData.append('file', file)
   return api.post('/auth/avatar', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
+    headers: { 'Conte-Type': 'multipart/form-data' }
   })
 }
 

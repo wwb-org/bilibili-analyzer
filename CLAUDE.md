@@ -18,12 +18,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. 视频数据采集与情感分析
 4. 前后端分离架构 + 用户权限管理
 
-**待实现特色**：
-- Kafka + Spark Streaming 实时流处理
-
 **已实现特色**：
+- Kafka + Spark Structured Streaming 实时流处理（Docker 容器化部署）
 - XGBoost热度预测 + TF-IDF内容推荐
 - 内容策划助手（爆款特征分析 + 标题评分 + 智能建议）
+- 多格式数据导出（视频/评论/热词 CSV 导出）
 
 ---
 
@@ -118,6 +117,8 @@ bilibili-analyzer/
 │   │   │   ├── crawl_service.py # 采集服务层
 │   │   │   ├── nlp.py          # NLP分析（情感分析、词云）
 │   │   │   ├── live_client.py  # B站直播弹幕客户端封装
+│   │   │   ├── kafka_service.py # Kafka生产者（弹幕/礼物发送）
+│   │   │   ├── redis_service.py # Redis客户端（Spark统计读取）
 │   │   │   └── analyzer.py     # 数据分析
 │   │   ├── ml/                 # 机器学习模块
 │   │   │   ├── features.py     # 特征工程
@@ -136,13 +137,18 @@ bilibili-analyzer/
 ├── docs/                       # 文档
 │   └── database.sql            # 数据库初始化脚本
 │
+├── streaming/                  # Spark Structured Streaming
+│   ├── spark_streaming.py      # 实时弹幕流处理（Kafka→Spark→Redis）
+│   └── requirements.txt        # pyspark + redis 依赖
+│
+├── docker-compose.yml          # 容器编排（Kafka/Redis/Spark）
 ├── CLAUDE.md                   # 项目说明（本文件）
 └── README.md
 ```
 
-**注意：以下目录在文档中规划但尚未创建：**
-- `streaming/` - Kafka + Spark Streaming（待实现）
-- `ml/` - 机器学习模块（待实现）
+**注意：以下模块已集成到对应目录：**
+- `streaming/` - Kafka + Spark Structured Streaming（已实现）
+- `ml/` - 机器学习模块（已集成到 `backend/app/ml/`）
 - `data_warehouse/` - 已集成到 `backend/app/etl/`
 
 ---
@@ -370,10 +376,11 @@ GET  /rooms/{room_id}/status  # 获取直播间连接状态
 }
 ```
 
-### 数据导出 (/api/export)（未实现）
+### 数据导出
 ```
-GET  /videos       # 导出视频数据Excel（未实现）
-GET  /keywords     # 导出热词数据Excel（未实现）
+GET  /api/videos/export/csv      # 导出视频数据CSV（支持筛选，上限1000条）
+GET  /api/comments/export/csv    # 导出评论数据CSV（支持情感筛选，上限1000条）
+GET  /api/keywords/export        # 导出热词数据CSV/JSON（支持来源筛选，上限2000条）
 ```
 
 ### 管理员 (/api/admin)
@@ -381,8 +388,10 @@ GET  /keywords     # 导出热词数据Excel（未实现）
 GET  /users           # 用户列表
 GET  /crawl/logs      # 采集日志
 GET  /crawl/status    # 获取最近采集任务状态
-POST /crawl/start     # 启动采集任务（已实现，支持配置视频数和评论数）
-POST /crawl/stop      # 停止采集任务（未实现）
+POST /crawl/start     # 启动采集任务（支持配置视频数和评论数）
+POST /crawl/stop      # 停止采集任务
+POST /crawl/batch     # 批量采集指定BVID视频
+POST /crawl/weekly    # 采集每周必看历史数据
 ```
 
 ### ML预测 (/api/ml)
@@ -577,18 +586,16 @@ CREATE TABLE crawl_logs (
 
 ---
 
-## 机器学习模型（待实现）
+## 机器学习模型（已实现）
 
 ### 1. 视频热度预测（XGBoost）
 - **输入特征**：like_rate, coin_rate, publish_hour, category, title_length
 - **预测目标**：7天后播放量
-- **模型文件**：ml/models/xgboost_model.pkl（待创建）
+- **模型文件**：`backend/ml_models/xgboost_predictor.pkl`
 
 ### 2. 内容推荐（TF-IDF）
 - **方法**：基于视频标题的TF-IDF向量余弦相似度
-- **模型文件**：ml/models/tfidf_vectorizer.pkl（待创建）
-
-**注意**：ml/ 目录尚未创建，以上为规划设计。
+- **模型文件**：`backend/ml_models/tfidf_vectorizer.pkl`、`tfidf_matrix.pkl`、`video_index.pkl`
 
 ---
 
@@ -670,24 +677,26 @@ python tests/test_etl.py
 | GET /api/statistics/dw/video-trends | 视频热度排行 |
 | GET /api/statistics/dw/video/{bvid}/history | 单视频历史趋势 |
 
-### Kafka（本地单节点）
+### Kafka + Spark（Docker 容器化）
 ```bash
-# 启动 Zookeeper
-bin/zookeeper-server-start.sh config/zookeeper.properties
+# 启动 Kafka、Redis、Spark（KRaft 模式，无需 Zookeeper）
+docker compose up -d kafka redis spark-master spark-worker
 
-# 启动 Kafka
-bin/kafka-server-start.sh config/server.properties
-
-# 创建Topic
-bin/kafka-topics.sh --create --topic video-topic --bootstrap-server localhost:9092
-bin/kafka-topics.sh --create --topic comment-topic --bootstrap-server localhost:9092
-bin/kafka-topics.sh --create --topic danmaku-topic --bootstrap-server localhost:9092
+# 验证服务状态
+docker compose ps
 ```
 
 ### Spark Streaming
 ```bash
-cd streaming
-spark-submit spark_streaming.py
+# 提交 Spark Streaming 任务（Docker 容器内执行）
+docker compose exec spark-master spark-submit \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
+  /opt/spark-apps/spark_streaming.py
+```
+
+**Spark Streaming 数据流：**
+```
+直播弹幕 → WebSocket → FastAPI → Kafka(live-danmaku-topic) → Spark Structured Streaming(5秒窗口聚合) → Redis(live:stats:{room_id}) → 前端展示
 ```
 
 ### 机器学习模型训练
@@ -866,18 +875,18 @@ python tests/test_crawl_service.py          # 采集服务测试
 
 ## 功能完成情况
 
-### 前端页面（9/10 完成）
+### 前端页面（11/11 完成）
 - [x] Login.vue - 登录页面（完整实现）
 - [x] Register.vue - 注册页面（完整实现）
-- [x] Home.vue - 首页仪表盘（基础结构）
-- [x] VideoList.vue - 视频数据分析（统计面板+卡片分析标签+详情图表+多视频对比）
-- [x] Comments.vue - 评论分析（完整实现）
+- [x] Home.vue - 首页仪表盘（完整实现）
+- [x] VideoList.vue - 视频数据分析（统计面板+卡片分析标签+详情图表+多视频对比+CSV导出）
+- [x] Comments.vue - 评论分析（完整实现，含CSV导出）
 - [x] Keywords.vue - 热词分析（完整实现：多源融合、词云交互、排行榜、详情面板、对比分析、导出）
 - [x] Live.vue - 直播弹幕分析（完整实现）
 - [x] Prediction.vue - ML预测（完整实现）
 - [x] ContentPlanner.vue - 内容策划助手（完整实现）
 - [x] Admin.vue - 管理员后台（完整实现）
-- [ ] Profile.vue - 个人中心（未实现）
+- [x] Profile.vue - 个人中心（完整实现）
 
 **ContentPlanner.vue 功能详情：**
 
@@ -971,7 +980,7 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] Vite配置（WebSocket代理支持）
 - [x] 路由守卫（管理员权限检查）
 
-### 后端功能（约90% 完成）
+### 后端功能（100% 完成）
 - [x] 用户认证API（注册、登录、JWT）
 - [x] 视频数据API（列表、详情）
 - [x] 视频分析API（统计、分析、对比接口）
@@ -982,11 +991,12 @@ python tests/test_crawl_service.py          # 采集服务测试
 - [x] 数据仓库ETL模块（DWD + DWS 两层）
 - [x] ETL调度器（每日自动执行、手动触发、历史回填）
 - [x] 定时采集任务调度 (tasks/scheduler.py)
-- [x] 管理员采集控制接口（/crawl/start 完整实现，/crawl/status 已实现）
+- [x] 管理员采集控制接口（/crawl/start、/crawl/stop、/crawl/batch、/crawl/weekly）
 - [x] 机器学习模块（热度预测 + 相似推荐）
 - [x] 内容策划API（爆款特征分析 + 关键词推荐 + 标题建议 + 三维度评分）
-- [ ] 数据导出功能（未实现）
-- [ ] 直播数据持久化存储（可选扩展）
+- [x] 数据导出功能（视频CSV、评论CSV、热词CSV/JSON）
+- [x] Kafka生产者服务（弹幕/礼物数据发送）
+- [x] Redis实时统计服务（Spark结果读取）
 
 **直播模块后端功能：**
 - [x] 多房间 WebSocket 连接管理
@@ -1006,18 +1016,51 @@ python tests/test_crawl_service.py          # 采集服务测试
 ### 大数据模块
 - [x] 数据仓库ETL（已集成到 backend/app/etl/）
 - [x] 机器学习模块（已集成到 backend/app/ml/）
-- [ ] streaming/ - Kafka + Spark Streaming（目录不存在）
+- [x] Kafka + Spark Structured Streaming（streaming/spark_streaming.py + Docker 容器化）
+
+---
+
+## 实时流处理架构（已实现）
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐
+│ B站直播间     │     │ FastAPI      │     │ Kafka                │
+│ (WebSocket)  │────▶│ live.py      │────▶│ live-danmaku-topic   │
+│              │     │ + NLP情感分析 │     │ (KRaft, Docker)      │
+└──────────────┘     └──────────────┘     └──────────┬───────────┘
+                                                     │
+                                                     ▼
+┌──────────────┐     ┌──────────────────────────────────────────┐
+│ 前端 Live.vue│◀────│ Redis                                    │
+│ 实时图表展示  │     │ live:stats:{room_id} (Hash)              │
+│              │     │ live:stats:{room_id}:history (List)      │
+└──────────────┘     └──────────┬───────────────────────────────┘
+                                ▲
+                                │
+                     ┌──────────┴───────────────────────────────┐
+                     │ Spark Structured Streaming               │
+                     │ - 5秒微批窗口聚合                         │
+                     │ - 情感分类统计                            │
+                     │ - foreachBatch 写入 Redis                 │
+                     └──────────────────────────────────────────┘
+```
+
+**关键文件：**
+| 文件 | 功能 |
+|------|------|
+| `streaming/spark_streaming.py` | Spark Structured Streaming 核心脚本 |
+| `backend/app/services/kafka_service.py` | Kafka 生产者（弹幕/礼物异步发送） |
+| `backend/app/services/redis_service.py` | Redis 客户端（统计数据读写） |
+| `docker-compose.yml` | Kafka(KRaft) + Redis + Spark Master/Worker 容器编排 |
 
 ---
 
 ## 项目创新点
 
-1. **数据仓库分层设计**：DWD→DWS 两层架构，预聚合优化查询性能
-2. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理
-3. **多维度分析**：播放量、互动率、情感等多指标综合分析
-4. **完整系统架构**：前后端分离 + 用户权限 + 管理后台
-5. **机器学习预测**：XGBoost热度预测 + TF-IDF多维度相似推荐
-6. **内容策划助手**：基于历史爆款数据的统计分析，结合正则模式识别的标题三维度评分系统
-
-### 待实现的创新点
-- Kafka + Spark Streaming 实时流处理
+1. **Kafka + Spark Structured Streaming 实时流处理**：弹幕数据通过 Kafka 消息队列异步传输，Spark 5秒微批窗口聚合，Redis 存储实时统计，实现端到端低延迟分析
+2. **数据仓库分层设计**：DWD→DWS 两层架构，预聚合优化查询性能
+3. **直播弹幕实时分析**：WebSocket实时连接，NLP流式处理，多房间并发监控
+4. **多维度分析**：播放量、互动率、情感等多指标综合分析
+5. **完整系统架构**：前后端分离 + 用户权限 + 管理后台 + Docker 容器化
+6. **机器学习预测**：XGBoost热度预测 + TF-IDF多维度相似推荐
+7. **内容策划助手**：基于历史爆款数据的统计分析，结合正则模式识别的标题三维度评分系统

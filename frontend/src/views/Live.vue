@@ -249,25 +249,31 @@
 
         <!-- 右侧：可视化图表区 -->
         <div class="content-col right-col">
-          <div class="chart-panel">
+          <div class="chart-section">
             <div class="panel-header small">
               <h3 class="panel-title">情感分布</h3>
             </div>
-            <div ref="pieChartRef" class="chart-container"></div>
+            <div class="chart-panel">
+              <div ref="pieChartRef" class="chart-container"></div>
+            </div>
           </div>
 
-          <div class="chart-panel">
+          <div class="chart-section">
             <div class="panel-header small">
               <h3 class="panel-title">情感趋势</h3>
             </div>
-            <div ref="lineChartRef" class="chart-container"></div>
+            <div class="chart-panel">
+              <div ref="lineChartRef" class="chart-container"></div>
+            </div>
           </div>
 
-          <div class="chart-panel">
+          <div class="chart-section">
             <div class="panel-header small">
               <h3 class="panel-title">实时热词</h3>
             </div>
-            <div ref="wordcloudRef" class="chart-container"></div>
+            <div class="chart-panel">
+              <div ref="wordcloudRef" class="chart-container"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -880,13 +886,17 @@ watch(
 }
 
 .global-tab {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--bili-pink);
   color: white;
   border: none;
 }
 
+.global-tab:hover {
+  background: #f2618a;
+}
+
 .global-tab.is-active {
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  background: var(--bili-pink);
 }
 
 /* 暂停提示横幅 */
@@ -934,17 +944,17 @@ watch(
 }
 
 .ranking-card.rank-1 {
-  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  background: #FFD700;
   color: white;
 }
 
 .ranking-card.rank-2 {
-  background: linear-gradient(135deg, #C0C0C0 0%, #A8A8A8 100%);
+  background: #C0C0C0;
   color: white;
 }
 
 .ranking-card.rank-3 {
-  background: linear-gradient(135deg, #CD7F32 0%, #B8860B 100%);
+  background: #CD7F32;
   color: white;
 }
 
@@ -1067,7 +1077,15 @@ watch(
 .content-col {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+}
+
+.left-col {
+  min-width: 0;
+}
+
+.right-col {
+  min-width: 0;
+  gap: 20px;
 }
 
 .panel-header {
@@ -1078,7 +1096,7 @@ watch(
 }
 
 .panel-header.small {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .panel-title {
@@ -1101,14 +1119,34 @@ watch(
   background: var(--bg-white);
   border-radius: 12px;
   border: 1px solid var(--border-light);
-  height: 520px;
+  height: 600px;
   padding: 16px;
+  display: flex;
+  flex-direction: column;
 }
 
 .danmaku-stream {
-  height: 100%;
+  flex: 1;
   overflow-y: auto;
-  padding-right: 8px;
+  padding-right: 4px;
+}
+
+.danmaku-stream::-webkit-scrollbar {
+  width: 6px;
+}
+
+.danmaku-stream::-webkit-scrollbar-track {
+  background: var(--bg-gray-light);
+  border-radius: 3px;
+}
+
+.danmaku-stream::-webkit-scrollbar-thumb {
+  background: #C0C4CC;
+  border-radius: 3px;
+}
+
+.danmaku-stream::-webkit-scrollbar-thumb:hover {
+  background: #909399;
 }
 
 .danmaku-item {
@@ -1147,20 +1185,22 @@ watch(
   line-height: 1.5;
 }
 
+.chart-section {
+  display: flex;
+  flex-direction: column;
+}
+
 .chart-panel {
   background: var(--bg-white);
   border-radius: 12px;
   padding: 16px;
   border: 1px solid var(--border-light);
-  height: 200px;
-  display: flex;
-  flex-direction: column;
+  height: 175px;
 }
 
 .chart-container {
-  flex: 1;
   width: 100%;
-  min-height: 0;
+  height: 100%;
 }
 
 /* 热门直播间面板 */
