@@ -66,6 +66,11 @@ class PredictionResult(BaseModel):
     feature_importance: Optional[dict] = None
     features_used: Optional[dict] = None
     predicted_at: Optional[str] = None
+    # 投币量预测
+    current_coin_count: Optional[int] = None
+    predicted_coin_count: Optional[int] = None
+    coin_increment: Optional[int] = None
+    coin_growth_rate: Optional[float] = None
     error: Optional[str] = None
 
 
@@ -112,6 +117,7 @@ class PredictorInfo(BaseModel):
     feature_names: Optional[List[str]] = None
     model_path: Optional[str] = None
     feature_importance: Optional[dict] = None
+    coin_model_loaded: Optional[bool] = None
     message: Optional[str] = None
 
 
@@ -151,6 +157,7 @@ class TrainResult(BaseModel):
 class TrainAllResult(BaseModel):
     """训练所有模型结果"""
     predictor: TrainResult
+    coin_predictor: Optional[TrainResult] = None
     recommender: TrainResult
     trained_at: Optional[str] = None
 
@@ -288,6 +295,30 @@ def train_recommender_model(
     return result
 
 
+@router.post("/train/coin-predictor", response_model=TrainResult)
+def train_coin_predictor_model(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    训练投币预测模型（管理员专用）
+
+    训练过程：
+    1. 从数据库提取视频数据
+    2. 构建特征和标签（投币量）
+    3. 使用 XGBoost 训练回归模型
+    4. 保存模型到 ml_models/ 目录
+    """
+    result = model_manager.train_coin_predictor(db)
+
+    # 重新加载模型
+    if result.get("success"):
+        hot_predictor.reload_model()
+
+    return result
+
+
 @router.post("/train/all", response_model=TrainAllResult)
 def train_all_models(
     background_tasks: BackgroundTasks,
@@ -301,6 +332,8 @@ def train_all_models(
 
     # 重新加载模型
     if results.get("predictor", {}).get("success"):
+        hot_predictor.reload_model()
+    if results.get("coin_predictor", {}).get("success"):
         hot_predictor.reload_model()
     if results.get("recommender", {}).get("success"):
         video_recommender.reload_models()

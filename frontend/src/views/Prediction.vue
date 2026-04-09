@@ -13,6 +13,12 @@
         <el-tag v-else type="warning" effect="plain">
           预测模型未加载
         </el-tag>
+        <el-tag v-if="modelInfo.predictor?.coin_model_loaded" type="success" effect="plain">
+          投币模型已加载
+        </el-tag>
+        <el-tag v-else type="warning" effect="plain">
+          投币模型未加载
+        </el-tag>
         <el-tag v-if="modelInfo.recommender?.loaded" type="success" effect="plain">
           推荐模型已加载
         </el-tag>
@@ -227,6 +233,33 @@
                 </div>
               </div>
 
+              <!-- 投币量预测 -->
+              <div class="coin-prediction" v-if="predictionResult.predicted_coin_count != null">
+                <div class="sub-section-title">投币量预测</div>
+                <div class="metrics-grid">
+                  <div class="metric-card">
+                    <div class="metric-label">当前投币量</div>
+                    <div class="metric-value">{{ formatNumber(predictionResult.current_coin_count) }}</div>
+                  </div>
+                  <div class="metric-card highlight-coin">
+                    <div class="metric-label">预测投币量</div>
+                    <div class="metric-value">{{ formatNumber(predictionResult.predicted_coin_count) }}</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">投币增长</div>
+                    <div class="metric-value" :class="predictionResult.coin_increment >= 0 ? 'positive' : 'negative'">
+                      {{ predictionResult.coin_increment >= 0 ? '+' : '' }}{{ formatNumber(predictionResult.coin_increment) }}
+                    </div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">投币增长率</div>
+                    <div class="metric-value" :class="predictionResult.coin_growth_rate >= 0 ? 'positive' : 'negative'">
+                      {{ predictionResult.coin_growth_rate >= 0 ? '+' : '' }}{{ predictionResult.coin_growth_rate?.toFixed(1) }}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- 特征重要性图表 -->
               <div class="chart-container" v-if="predictionResult.feature_importance">
                 <div class="chart-title">特征重要性</div>
@@ -260,7 +293,7 @@
                 <span class="total-count">共 {{ recommendResult.total }} 个推荐</span>
               </div>
 
-              <div class="recommend-list">
+              <div class="recommend-list" v-if="recommendResult.recommendations && recommendResult.recommendations.length > 0">
                 <div
                   v-for="(item, index) in recommendResult.recommendations"
                   :key="item.bvid"
@@ -285,6 +318,7 @@
                   <el-icon class="analyze-icon"><Right /></el-icon>
                 </div>
               </div>
+              <el-empty v-else description="暂无相似视频推荐" :image-size="60" />
             </template>
           </div>
         </div>
@@ -294,7 +328,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onUnmounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Check, Right } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
@@ -304,6 +338,9 @@ import {
   getModelInfo
 } from '@/api/ml'
 import { getVideos, getCategories } from '@/api/videos'
+import { usePredictionStore } from '@/store/prediction'
+
+const predictionStore = usePredictionStore()
 
 // ========== 模型状态 ==========
 const modelInfo = ref({ predictor: {}, recommender: {} })
@@ -421,16 +458,17 @@ const analyzeVideo = async (video) => {
 
     predictionResult.value = predictRes
     recommendResult.value = recommendRes
-
-    // 渲染特征重要性图表
-    if (predictRes.success && predictRes.feature_importance) {
-      await nextTick()
-      renderFeatureChart(predictRes.feature_importance)
-    }
   } catch (e) {
     ElMessage.error('分析失败: ' + e.message)
   } finally {
     analyzing.value = false
+  }
+
+  // 必须在 analyzing=false 之后渲染图表，否则 DOM 还在显示骨架屏
+  if (predictionResult.value?.success && predictionResult.value?.feature_importance
+      && Object.keys(predictionResult.value.feature_importance).length > 0) {
+    await nextTick()
+    renderFeatureChart(predictionResult.value.feature_importance)
   }
 }
 
@@ -580,12 +618,56 @@ const handleResize = () => {
   featureChart?.resize()
 }
 
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  predictionStore.selectedCategory = selectedCategory.value
+  predictionStore.orderBy = orderBy.value
+  predictionStore.searchKeyword = searchKeyword.value
+  predictionStore.videos = videos.value
+  predictionStore.totalVideos = totalVideos.value
+  predictionStore.currentPage = currentPage.value
+  predictionStore.categoryOptions = categoryOptions.value
+  predictionStore.modelInfo = modelInfo.value
+  predictionStore.selectedVideo = selectedVideo.value
+  predictionStore.predictionResult = predictionResult.value
+  predictionStore.recommendResult = recommendResult.value
+  predictionStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = async () => {
+  selectedCategory.value = predictionStore.selectedCategory
+  orderBy.value = predictionStore.orderBy
+  searchKeyword.value = predictionStore.searchKeyword
+  videos.value = predictionStore.videos
+  totalVideos.value = predictionStore.totalVideos
+  currentPage.value = predictionStore.currentPage
+  categoryOptions.value = predictionStore.categoryOptions
+  modelInfo.value = predictionStore.modelInfo
+  selectedVideo.value = predictionStore.selectedVideo
+  predictionResult.value = predictionStore.predictionResult
+  recommendResult.value = predictionStore.recommendResult
+
+  if (predictionResult.value?.success && predictionResult.value?.feature_importance
+      && Object.keys(predictionResult.value.feature_importance).length > 0) {
+    await nextTick()
+    renderFeatureChart(predictionResult.value.feature_importance)
+  }
+}
+
 // ========== 生命周期 ==========
-onMounted(() => {
-  loadModelInfo()
-  loadCategories()
-  loadVideos()
+onMounted(async () => {
   window.addEventListener('resize', handleResize)
+  if (predictionStore.isFresh && predictionStore.videos.length > 0) {
+    await restoreFromStore()
+  } else {
+    loadModelInfo()
+    loadCategories()
+    loadVideos()
+  }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
 })
 
 onUnmounted(() => {
@@ -950,6 +1032,23 @@ onUnmounted(() => {
 
 .metric-card.highlight {
   background: #E6F7FF;
+}
+
+.metric-card.highlight-coin {
+  background: #FFF7E6;
+}
+
+.coin-prediction {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border-light);
+}
+
+.sub-section-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 12px;
 }
 
 .metric-label {

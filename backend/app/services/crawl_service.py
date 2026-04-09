@@ -2,14 +2,17 @@
 采集服务层
 封装完整的采集业务逻辑，集成情感分析和日志记录
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+import logging
 
 from app.services.crawler import BilibiliCrawler
-from app.services.nlp import NLPAnalyzer
 from app.models.models import Video, Comment, Danmaku, CrawlLog
 from app.core.database import SessionLocal
+
+logger = logging.getLogger(__name__)
 
 
 class CrawlService:
@@ -19,22 +22,27 @@ class CrawlService:
         # 使用动态Cookie初始化爬虫（支持运行时更新）
         from app.services.bilibili_auth import get_current_cookie
         self.crawler = BilibiliCrawler(cookie=get_current_cookie())
-        self.nlp = NLPAnalyzer()
 
-    def _get_sentiment_label(self, score: float) -> str:
-        """根据情感分数获取标签"""
-        if score >= 0.6:
-            return 'positive'
-        elif score <= 0.4:
-            return 'negative'
-        else:
-            return 'neutral'
+    def _run_etl_after_crawl(self):
+        """采集完成后自动执行当天的ETL"""
+        try:
+            from app.etl.scheduler import etl_scheduler
+            logger.info("[采集后ETL] 开始执行当天ETL...")
+            print("\n[采集后ETL] 自动执行当天ETL任务...")
+            results = etl_scheduler.run_daily_etl(stat_date=date.today())
+            success_count = sum(1 for r in results if r.get('status') == 'success')
+            logger.info(f"[采集后ETL] 完成，{success_count}/{len(results)} 个任务成功")
+            print(f"[采集后ETL] 完成，{success_count}/{len(results)} 个任务成功")
+        except Exception as e:
+            logger.error(f"[采集后ETL] 执行失败: {e}")
+            print(f"[采集后ETL] 执行失败: {e}")
 
     def crawl_popular_videos(
         self,
         max_videos: int = 50,
         comments_per_video: int = 100,
-        danmakus_per_video: int = 500
+        danmakus_per_video: int = 500,
+        stop_event=None
     ) -> Dict:
         """
         采集热门视频（带情感分析和日志记录）
@@ -87,13 +95,20 @@ class CrawlService:
             print(f"[采集任务] 获取到 {len(videos)} 个热门视频")
 
             # 遍历每个视频
+            stopped = False
             for i, video_raw in enumerate(videos[:max_videos], 1):
+                if stop_event and stop_event.is_set():
+                    stopped = True
+                    print("[采集任务] 收到停止信号，已停止")
+                    break
                 try:
                     bvid = video_raw.get('bvid')
                     print(f"\n[{i}/{max_videos}] 处理视频: {bvid}")
 
                     # 从列表数据获取分区信息（详情API不返回分区名）
                     category_from_list = video_raw.get('tname', '') or video_raw.get('tnamev2', '')
+                    # 映射子分区为主分区
+                    category_from_list = self.crawler.map_category(category_from_list)
 
                     # 获取视频详情（用于获取cid、aid等）
                     detail = self.crawler.get_video_detail(bvid)
@@ -148,7 +163,11 @@ class CrawlService:
                     db.commit()
 
             # 更新日志状态
-            log.status = 'success'
+            if stopped:
+                log.status = 'stopped'
+                log.error_msg = '用户手动停止'
+            else:
+                log.status = 'success'
             log.video_count = stats['videos_saved']
             log.comment_count = stats['comments_saved']
             log.danmaku_count = stats['danmakus_saved']
@@ -156,6 +175,11 @@ class CrawlService:
             db.commit()
 
             print(f"\n[采集任务] 完成！视频: {stats['videos_saved']}, 评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
+
+            # 采集成功后自动执行ETL（停止时不触发）
+            if not stopped:
+                self._run_etl_after_crawl()
+
             return stats
 
         except Exception as e:
@@ -194,10 +218,45 @@ class CrawlService:
         saved_count = 0
         page_size = 20
         total_pages = (max_comments + page_size - 1) // page_size
+        next_cursor = 0
+        use_main_api = True
+        legacy_page = 1
 
         try:
-            for page in range(1, total_pages + 1):
-                comments_raw = self.crawler.get_video_comments(oid, page=page, page_size=page_size)
+            while saved_count < max_comments:
+                comments_raw = None
+
+                if use_main_api:
+                    main_data = self.crawler.get_video_comments_main(
+                        oid,
+                        next_cursor=next_cursor,
+                        page_size=page_size,
+                        mode=3,
+                    )
+                    if main_data and main_data.get("replies"):
+                        comments_raw = main_data.get("replies")
+                        cursor = main_data.get("cursor") or {}
+                        next_value = cursor.get("next")
+                        is_end = bool(cursor.get("is_end"))
+                        if is_end:
+                            next_cursor = None
+                        elif isinstance(next_value, int):
+                            # 防止 next 不推进导致死循环
+                            if next_value == next_cursor:
+                                use_main_api = False
+                            next_cursor = next_value
+                        else:
+                            use_main_api = False
+                    else:
+                        # 新接口异常时降级到旧接口，保证采集不中断
+                        use_main_api = False
+
+                if not use_main_api:
+                    if legacy_page > total_pages:
+                        break
+                    comments_raw = self.crawler.get_video_comments(oid, page=legacy_page, page_size=page_size)
+                    legacy_page += 1
+
                 if not comments_raw:
                     break
 
@@ -217,27 +276,46 @@ class CrawlService:
                     if existing:
                         continue
 
-                    # 情感分析
-                    sentiment_score = self.nlp.analyze_sentiment(content)
-                    sentiment_label = self._get_sentiment_label(sentiment_score)
+                    # 细粒度情绪分析 + 三分类兼容分数
+                    emotion_result = self.crawler.emotion.analyze_emotion(content)
+                    profile = self.crawler.parse_comment_user_profile(comment_raw)
 
-                    # 创建评论记录
+                    # 创建评论记录，使用 SAVEPOINT 防止重复键冲突丢失整批数据
                     comment = Comment(
                         rpid=rpid,
                         video_id=video_id,
                         content=content,
                         user_name=user_name,
-                        sentiment_score=sentiment_score,
-                        like_count=like_count
+                        commenter_mid=profile["commenter_mid"],
+                        commenter_level=profile["commenter_level"],
+                        commenter_sex=profile["commenter_sex"],
+                        commenter_vip_type=profile["commenter_vip_type"],
+                        commenter_is_official=profile["commenter_is_official"],
+                        sentiment_score=emotion_result.sentiment_score,
+                        emotion_label=emotion_result.emotion_label,
+                        emotion_scores_json=emotion_result.emotion_scores,
+                        emotion_model_version=emotion_result.model_version,
+                        emotion_analyzed_at=emotion_result.analyzed_at,
+                        like_count=like_count,
+                        reply_count=profile["reply_count"],
+                        up_replied=profile["up_replied"],
+                        comment_ctime=profile["comment_ctime"],
                     )
-                    db.add(comment)
-                    saved_count += 1
+                    try:
+                        nested = db.begin_nested()
+                        db.add(comment)
+                        db.flush()
+                        saved_count += 1
+                    except IntegrityError:
+                        nested.rollback()
 
                     # 每20条提交一次
                     if saved_count % 20 == 0:
                         db.commit()
 
                 if saved_count >= max_comments:
+                    break
+                if use_main_api and next_cursor is None:
                     break
 
             # 最后提交剩余的
@@ -321,7 +399,8 @@ class CrawlService:
         bvids: List[str],
         comments_per_video: int = 100,
         danmakus_per_video: int = 500,
-        log_id: int = None
+        log_id: int = None,
+        stop_event=None
     ) -> Dict:
         """
         批量采集指定视频
@@ -363,7 +442,12 @@ class CrawlService:
         try:
             print(f"\n[批量采集] 开始采集 {len(bvids)} 个指定视频")
 
+            stopped = False
             for i, bvid in enumerate(bvids, 1):
+                if stop_event and stop_event.is_set():
+                    stopped = True
+                    print("[批量采集] 收到停止信号，已停止")
+                    break
                 video_result = {
                     'bvid': bvid,
                     'status': 'pending',
@@ -436,13 +520,17 @@ class CrawlService:
                 stats['details'].append(video_result)
 
             # 更新日志状态
-            log.status = 'success'
+            if stopped:
+                log.status = 'stopped'
+                log.error_msg = '用户手动停止'
+            else:
+                log.status = 'success'
             log.video_count = stats['videos_saved']
             log.comment_count = stats['comments_saved']
             log.danmaku_count = stats['danmakus_saved']
             log.finished_at = datetime.utcnow()
 
-            if stats['errors']:
+            if not stopped and stats['errors']:
                 # 部分失败时记录错误信息
                 log.error_msg = f"部分失败({len(stats['errors'])}个): " + '; '.join(stats['errors'][:5])
 
@@ -450,6 +538,11 @@ class CrawlService:
 
             print(f"\n[批量采集] 完成！成功: {stats['videos_saved']}/{stats['total']}, "
                   f"评论: {stats['comments_saved']}, 弹幕: {stats['danmakus_saved']}")
+
+            # 采集成功后自动执行ETL（停止时不触发）
+            if not stopped:
+                self._run_etl_after_crawl()
+
             return stats
 
         except Exception as e:

@@ -44,6 +44,13 @@ export const getCrawlStatus = () => {
 }
 
 /**
+ * 停止正在运行的采集任务
+ */
+export const stopCrawl = () => {
+  return api.post('/admin/crawl/stop')
+}
+
+/**
  * 获取 ETL 调度器状态
  */
 export const getETLStatus = () => {
@@ -121,4 +128,30 @@ export const verifyBilibiliCookie = (cookie) => {
  */
 export const updateBilibiliCookie = (cookie) => {
   return api.post('/admin/bilibili/cookie', { cookie })
+}
+
+/**
+ * 启动每周必看历史数据采集
+ * @param {Object} config
+ * @param {number|null} config.max_episodes - 采集期数（null=全部）
+ * @param {number} config.comments_per_video - 每视频评论数
+ */
+export const startWeeklyCrawl = (config) => {
+  return api.post('/admin/crawl/weekly', config)
+}
+
+
+
+/**
+ * 获取数据概览（ODS/DWD/DWS 三层按日期统计）
+ */
+export const getDataOverview = () => {
+  return api.get('/admin/data-overview')
+}
+
+/**
+ * 修复已有视频分区（子分区→主分区映射）
+ */
+export const fixCategories = () => {
+  return api.post('/admin/fix-categories')
 }

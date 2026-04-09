@@ -1,35 +1,34 @@
 """
-评论分析API
+评论分析 API
 """
-from typing import List, Optional
-from datetime import datetime
 from collections import Counter
-from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import func, case
-from pydantic import BaseModel
-import jieba
+from datetime import datetime
+from typing import Dict, List, Optional
 import csv
 import io
 
+import jieba
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
 from app.core.database import get_db
-from app.models import Video, Comment
+from app.models import Comment, Video
+from app.services.emotion import EMOTION_LABELS, EmotionAnalyzer
+from app.services.nlp import NLPAnalyzer
 
 router = APIRouter()
 
-# 停用词列表
-STOPWORDS = set([
-    '的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都', '一', '一个',
-    '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好',
-    '这', '那', '吗', '什么', '他', '她', '它', '们', '这个', '那个', '啊', '呢',
-    '吧', '哦', '嗯', '呀', '哈', '哈哈', '哈哈哈', '嘿', '喂', '诶', '哎',
-    '可以', '怎么', '为什么', '真的', '其实', '但是', '还是', '如果', '因为',
-    '所以', '或者', '而且', '虽然', '然后', '感觉', '觉得', '知道', '应该',
-    '真是', '太', '最', '更', '非常', '比较', '已经', '还', '又', '再', '只',
-    '没', '被', '把', '给', '让', '从', '向', '对', '于', '与', '等', '能',
-    '可能', '可', '想', '来', '去', '过', '得', '起', '完', '出', '回', '下',
-])
+# 使用统一停用词
+STOPWORDS = NLPAnalyzer.STOP_WORDS
+EMOTION_QUERY_REGEX = (
+    "^(admiration|amusement|anger|annoyance|approval|caring|confusion|"
+    "curiosity|desire|disappointment|disapproval|disgust|embarrassment|"
+    "excitement|fear|gratitude|grief|joy|love|nervousness|optimism|"
+    "pride|realization|relief|remorse|sadness|surprise|neutral)$"
+)
 
 
 def get_sentiment_label(score: Optional[float]) -> Optional[str]:
@@ -38,20 +37,227 @@ def get_sentiment_label(score: Optional[float]) -> Optional[str]:
         return None
     if score > 0.6:
         return "positive"
-    elif score < 0.4:
+    if score < 0.4:
         return "negative"
-    else:
-        return "neutral"
+    return "neutral"
 
 
 def get_dominant_sentiment(positive: int, neutral: int, negative: int) -> str:
     """获取主导情感类型"""
     if positive >= neutral and positive >= negative:
         return "positive"
-    elif negative >= neutral and negative >= positive:
+    if negative >= neutral and negative >= positive:
         return "negative"
-    else:
-        return "neutral"
+    return "neutral"
+
+
+def apply_sentiment_filter(query, sentiment: Optional[str]):
+    if sentiment == "positive":
+        return query.filter(Comment.sentiment_score > 0.6)
+    if sentiment == "negative":
+        return query.filter(Comment.sentiment_score < 0.4)
+    if sentiment == "neutral":
+        return query.filter(Comment.sentiment_score >= 0.4, Comment.sentiment_score <= 0.6)
+    return query
+
+
+def apply_emotion_filter(query, emotion: Optional[str]):
+    if emotion:
+        return query.filter(Comment.emotion_label == emotion)
+    return query
+
+
+def normalize_emotion_scores(raw_scores: Optional[dict]) -> Dict[str, float]:
+    scores = {label: 0.0 for label in EMOTION_LABELS}
+    if not isinstance(raw_scores, dict):
+        return scores
+    for key, value in raw_scores.items():
+        label = EmotionAnalyzer.normalize_emotion_label(str(key))
+        if not label:
+            continue
+        try:
+            scores[label] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return scores
+
+
+def build_emotion_distribution(comments: List[Comment], total_count: int) -> Dict[str, Dict]:
+    counts = {label: 0 for label in EMOTION_LABELS}
+    for comment in comments:
+        label = EmotionAnalyzer.normalize_emotion_label(comment.emotion_label or "")
+        if not label:
+            sentiment = get_sentiment_label(getattr(comment, "sentiment_score", None))
+            if sentiment == "positive":
+                label = "joy"
+            elif sentiment == "negative":
+                label = "anger"
+            else:
+                label = "neutral"
+        counts[label] += 1
+
+    rates = {
+        key: round((value / total_count * 100), 1) if total_count else 0.0
+        for key, value in counts.items()
+    }
+
+    dominant = max(counts, key=counts.get) if total_count > 0 else None
+    return {"counts": counts, "rates": rates, "dominant": dominant}
+
+
+def normalize_commenter_sex(sex: Optional[str]) -> str:
+    val = (sex or "").strip()
+    if val in {"男", "女"}:
+        return val
+    return "未知"
+
+
+def normalize_vip_type(vip_type: Optional[int]) -> int:
+    if vip_type in (0, 1, 2):
+        return int(vip_type)
+    return 0
+
+
+def build_distribution_items(counter: Counter, total: int, ordered_keys: Optional[List[str]] = None) -> List[Dict]:
+    keys = ordered_keys or list(counter.keys())
+    items = []
+    for key in keys:
+        count = int(counter.get(key, 0))
+        if count <= 0:
+            continue
+        items.append({
+            "label": key,
+            "count": count,
+            "rate": round(count / total * 100, 1) if total else 0.0,
+        })
+    return items
+
+
+def build_audience_profile_data(comments: List[Comment]) -> Dict:
+    user_map: Dict[str, Dict] = {}
+    for comment in comments:
+        if comment.commenter_mid:
+            user_key = f"mid:{comment.commenter_mid}"
+        elif comment.user_name:
+            user_key = f"name:{comment.user_name}"
+        else:
+            user_key = f"comment:{comment.id}"
+
+        if user_key not in user_map:
+            user_map[user_key] = {
+                "mid": comment.commenter_mid,
+                "user_name": comment.user_name or "匿名用户",
+                "level": comment.commenter_level,
+                "vip_type": normalize_vip_type(comment.commenter_vip_type),
+                "sex": normalize_commenter_sex(comment.commenter_sex),
+                "is_official": bool(comment.commenter_is_official),
+                "comment_count": 0,
+                "like_total": 0,
+                "max_reply_count": 0,
+            }
+
+        item = user_map[user_key]
+        item["comment_count"] += 1
+        item["like_total"] += int(comment.like_count or 0)
+        item["max_reply_count"] = max(item["max_reply_count"], int(comment.reply_count or 0))
+        if not item["user_name"] and comment.user_name:
+            item["user_name"] = comment.user_name
+        if item["level"] is None and comment.commenter_level is not None:
+            item["level"] = comment.commenter_level
+
+    total_commenters = len(user_map)
+    total_comments = len(comments)
+    if total_commenters == 0:
+        return {
+            "summary": {
+                "total_commenters": 0,
+                "avg_comments_per_user": 0.0,
+                "official_rate": 0.0,
+                "vip_rate": 0.0,
+            },
+            "level_distribution": [],
+            "vip_distribution": [],
+            "official_distribution": [],
+            "sex_distribution": [],
+            "top_commenters": [],
+        }
+
+    level_counter = Counter()
+    vip_counter = Counter()
+    official_counter = Counter()
+    sex_counter = Counter()
+
+    vip_label_map = {
+        0: "普通用户",
+        1: "大会员",
+        2: "年度大会员",
+    }
+
+    user_items = list(user_map.values())
+    for user in user_items:
+        level_key = f"Lv{user['level']}" if user["level"] is not None else "未知等级"
+        vip_key = vip_label_map.get(user["vip_type"], "普通用户")
+        official_key = "认证用户" if user["is_official"] else "未认证用户"
+        sex_key = user["sex"]
+
+        level_counter[level_key] += 1
+        vip_counter[vip_key] += 1
+        official_counter[official_key] += 1
+        sex_counter[sex_key] += 1
+
+    sorted_top = sorted(
+        user_items,
+        key=lambda x: (
+            x["comment_count"],
+            (x["like_total"] / x["comment_count"]) if x["comment_count"] else 0,
+            x["max_reply_count"],
+        ),
+        reverse=True,
+    )
+
+    top_commenters = []
+    for user in sorted_top[:10]:
+        avg_like = round(user["like_total"] / user["comment_count"], 1) if user["comment_count"] else 0.0
+        top_commenters.append({
+            "mid": user["mid"],
+            "user_name": user["user_name"],
+            "comment_count": user["comment_count"],
+            "avg_like_count": avg_like,
+            "max_reply_count": user["max_reply_count"],
+            "level": user["level"],
+            "vip_type": user["vip_type"],
+            "sex": user["sex"],
+            "is_official": user["is_official"],
+        })
+
+    vip_user_count = vip_counter.get("大会员", 0) + vip_counter.get("年度大会员", 0)
+    summary = {
+        "total_commenters": total_commenters,
+        "avg_comments_per_user": round(total_comments / total_commenters, 2),
+        "official_rate": round(official_counter.get("认证用户", 0) / total_commenters * 100, 1),
+        "vip_rate": round(vip_user_count / total_commenters * 100, 1),
+    }
+
+    return {
+        "summary": summary,
+        "level_distribution": build_distribution_items(level_counter, total_commenters),
+        "vip_distribution": build_distribution_items(
+            vip_counter,
+            total_commenters,
+            ordered_keys=["普通用户", "大会员", "年度大会员"],
+        ),
+        "official_distribution": build_distribution_items(
+            official_counter,
+            total_commenters,
+            ordered_keys=["认证用户", "未认证用户"],
+        ),
+        "sex_distribution": build_distribution_items(
+            sex_counter,
+            total_commenters,
+            ordered_keys=["男", "女", "未知"],
+        ),
+        "top_commenters": top_commenters,
+    }
 
 
 # ==================== 响应模型 ====================
@@ -62,6 +268,13 @@ class SentimentSummary(BaseModel):
     neutral: int
     negative: int
     dominant: str
+
+
+class EmotionDistribution(BaseModel):
+    """细粒度情绪分布"""
+    counts: Dict[str, int]
+    rates: Dict[str, float]
+    dominant: Optional[str] = None
 
 
 class VideoWithCommentSummary(BaseModel):
@@ -92,6 +305,11 @@ class CommentStatsResponse(BaseModel):
     negative_rate: float
     avg_sentiment_score: float
     avg_like_count: float
+    emotion_distribution: EmotionDistribution = Field(default_factory=lambda: EmotionDistribution(
+        counts={label: 0 for label in EMOTION_LABELS},
+        rates={label: 0.0 for label in EMOTION_LABELS},
+        dominant=None,
+    ))
 
 
 class CommentItem(BaseModel):
@@ -100,9 +318,19 @@ class CommentItem(BaseModel):
     rpid: Optional[int]
     content: str
     user_name: Optional[str]
+    commenter_mid: Optional[int]
+    commenter_level: Optional[int]
+    commenter_sex: Optional[str]
+    commenter_vip_type: int = 0
+    commenter_is_official: bool = False
     sentiment_score: Optional[float]
     sentiment_label: Optional[str]
+    emotion_label: Optional[str]
+    emotion_scores: Optional[Dict[str, float]]
     like_count: int
+    reply_count: int = 0
+    up_replied: bool = False
+    comment_ctime: Optional[datetime]
     created_at: Optional[datetime]
 
 
@@ -117,6 +345,7 @@ class WordcloudItem(BaseModel):
     name: str
     value: int
     sentiment: Optional[str] = None
+    emotion: Optional[str] = None
 
 
 class WordcloudResponse(BaseModel):
@@ -130,6 +359,7 @@ class TopCommentItem(BaseModel):
     content: str
     user_name: Optional[str]
     sentiment_label: Optional[str]
+    emotion_label: Optional[str]
     like_count: int
 
 
@@ -165,6 +395,44 @@ class CompareResponse(BaseModel):
     videos: List[CompareVideoItem]
 
 
+class DistributionItem(BaseModel):
+    """画像分布项"""
+    label: str
+    count: int
+    rate: float
+
+
+class AudienceSummary(BaseModel):
+    """用户画像摘要"""
+    total_commenters: int
+    avg_comments_per_user: float
+    official_rate: float
+    vip_rate: float
+
+
+class TopCommenterItem(BaseModel):
+    """活跃评论用户项"""
+    mid: Optional[int]
+    user_name: str
+    comment_count: int
+    avg_like_count: float
+    max_reply_count: int
+    level: Optional[int]
+    vip_type: int
+    sex: str
+    is_official: bool
+
+
+class AudienceProfileResponse(BaseModel):
+    """评论用户画像响应"""
+    summary: AudienceSummary
+    level_distribution: List[DistributionItem]
+    vip_distribution: List[DistributionItem]
+    official_distribution: List[DistributionItem]
+    sex_distribution: List[DistributionItem]
+    top_commenters: List[TopCommenterItem]
+
+
 # ==================== API接口 ====================
 
 @router.get("/videos", response_model=VideoListWithCommentsResponse)
@@ -174,76 +442,67 @@ def get_videos_with_comment_summary(
     category: Optional[str] = None,
     keyword: Optional[str] = None,
     order_by: str = Query("comment_count", regex="^(comment_count|positive_count|negative_count)$"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """获取视频列表（含评论统计摘要）"""
-    # 基础查询
     query = db.query(Video)
 
-    # 筛选条件
     if category:
         query = query.filter(Video.category == category)
     if keyword:
         query = query.filter(Video.title.contains(keyword))
 
-    # 只查询有评论的视频
     query = query.filter(Video.comment_count > 0)
-
-    # 总数
     total = query.count()
 
-    # 排序
     if order_by == "comment_count":
         query = query.order_by(Video.comment_count.desc())
     elif order_by == "positive_count":
         subq = db.query(
             Comment.video_id,
-            func.count(Comment.id).label('cnt')
+            func.count(Comment.id).label("cnt"),
         ).filter(
-            Comment.sentiment_score > 0.6
+            Comment.sentiment_score > 0.6,
         ).group_by(Comment.video_id).subquery()
         query = query.outerjoin(
             subq,
-            Video.id == subq.c.video_id
+            Video.id == subq.c.video_id,
         ).order_by(
             func.coalesce(subq.c.cnt, 0).desc(),
-            Video.comment_count.desc()
+            Video.comment_count.desc(),
         )
     elif order_by == "negative_count":
         subq = db.query(
             Comment.video_id,
-            func.count(Comment.id).label('cnt')
+            func.count(Comment.id).label("cnt"),
         ).filter(
-            Comment.sentiment_score < 0.4
+            Comment.sentiment_score < 0.4,
         ).group_by(Comment.video_id).subquery()
         query = query.outerjoin(
             subq,
-            Video.id == subq.c.video_id
+            Video.id == subq.c.video_id,
         ).order_by(
             func.coalesce(subq.c.cnt, 0).desc(),
-            Video.comment_count.desc()
+            Video.comment_count.desc(),
         )
 
-    # 分页
     offset = (page - 1) * page_size
     videos = query.offset(offset).limit(page_size).all()
 
-    # 构建响应
     items = []
     for video in videos:
-        # 统计该视频的评论情感分布
         positive = db.query(Comment).filter(
             Comment.video_id == video.id,
-            Comment.sentiment_score > 0.6
+            Comment.sentiment_score > 0.6,
         ).count()
         negative = db.query(Comment).filter(
             Comment.video_id == video.id,
-            Comment.sentiment_score < 0.4
+            Comment.sentiment_score < 0.4,
         ).count()
         neutral = db.query(Comment).filter(
             Comment.video_id == video.id,
             Comment.sentiment_score >= 0.4,
-            Comment.sentiment_score <= 0.6
+            Comment.sentiment_score <= 0.6,
         ).count()
 
         items.append(VideoWithCommentSummary(
@@ -257,8 +516,8 @@ def get_videos_with_comment_summary(
                 positive=positive,
                 neutral=neutral,
                 negative=negative,
-                dominant=get_dominant_sentiment(positive, neutral, negative)
-            )
+                dominant=get_dominant_sentiment(positive, neutral, negative),
+            ),
         ))
 
     return {"total": total, "items": items}
@@ -267,12 +526,10 @@ def get_videos_with_comment_summary(
 @router.get("/{bvid}/stats", response_model=CommentStatsResponse)
 def get_comment_stats(bvid: str, db: Session = Depends(get_db)):
     """获取单视频评论统计"""
-    # 查询视频
     video = db.query(Video).filter(Video.bvid == bvid).first()
     if not video:
         raise HTTPException(status_code=404, detail="视频不存在")
 
-    # 查询评论
     comments = db.query(Comment).filter(Comment.video_id == video.id).all()
     total_count = len(comments)
 
@@ -286,26 +543,29 @@ def get_comment_stats(bvid: str, db: Session = Depends(get_db)):
             neutral_rate=0,
             negative_rate=0,
             avg_sentiment_score=0.5,
-            avg_like_count=0
+            avg_like_count=0,
+            emotion_distribution=EmotionDistribution(
+                counts={label: 0 for label in EMOTION_LABELS},
+                rates={label: 0.0 for label in EMOTION_LABELS},
+                dominant=None,
+            ),
         )
 
-    # 统计情感分布
     positive_count = sum(1 for c in comments if c.sentiment_score and c.sentiment_score > 0.6)
     negative_count = sum(1 for c in comments if c.sentiment_score and c.sentiment_score < 0.4)
     neutral_count = total_count - positive_count - negative_count
 
-    # 计算比率
     positive_rate = round(positive_count / total_count * 100, 1)
     neutral_rate = round(neutral_count / total_count * 100, 1)
     negative_rate = round(negative_count / total_count * 100, 1)
 
-    # 计算平均情感分数
     scores = [c.sentiment_score for c in comments if c.sentiment_score is not None]
     avg_sentiment_score = round(sum(scores) / len(scores), 3) if scores else 0.5
 
-    # 计算平均点赞数
     likes = [c.like_count or 0 for c in comments]
     avg_like_count = round(sum(likes) / len(likes), 1) if likes else 0
+
+    emotion_distribution = build_emotion_distribution(comments, total_count)
 
     return CommentStatsResponse(
         total_count=total_count,
@@ -316,8 +576,21 @@ def get_comment_stats(bvid: str, db: Session = Depends(get_db)):
         neutral_rate=neutral_rate,
         negative_rate=negative_rate,
         avg_sentiment_score=avg_sentiment_score,
-        avg_like_count=avg_like_count
+        avg_like_count=avg_like_count,
+        emotion_distribution=EmotionDistribution(**emotion_distribution),
     )
+
+
+@router.get("/{bvid}/audience-profile", response_model=AudienceProfileResponse)
+def get_comment_audience_profile(bvid: str, db: Session = Depends(get_db)):
+    """获取单视频评论用户画像"""
+    video = db.query(Video).filter(Video.bvid == bvid).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="视频不存在")
+
+    comments = db.query(Comment).filter(Comment.video_id == video.id).all()
+    profile_data = build_audience_profile_data(comments)
+    return AudienceProfileResponse(**profile_data)
 
 
 @router.get("/{bvid}/list", response_model=CommentListResponse)
@@ -326,57 +599,58 @@ def get_comment_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sentiment: Optional[str] = Query(None, regex="^(positive|neutral|negative)$"),
-    sort_by: str = Query("like_count", regex="^(like_count|created_at|sentiment_score)$"),
-    db: Session = Depends(get_db)
+    emotion: Optional[str] = Query(None, regex=EMOTION_QUERY_REGEX),
+    sort_by: str = Query("like_count", regex="^(like_count|created_at|comment_ctime|sentiment_score)$"),
+    db: Session = Depends(get_db),
 ):
     """获取单视频评论列表（支持筛选和排序）"""
-    # 查询视频
     video = db.query(Video).filter(Video.bvid == bvid).first()
     if not video:
         raise HTTPException(status_code=404, detail="视频不存在")
 
-    # 查询评论
     query = db.query(Comment).filter(Comment.video_id == video.id)
+    query = apply_sentiment_filter(query, sentiment)
+    query = apply_emotion_filter(query, emotion)
 
-    # 情感筛选
-    if sentiment == "positive":
-        query = query.filter(Comment.sentiment_score > 0.6)
-    elif sentiment == "negative":
-        query = query.filter(Comment.sentiment_score < 0.4)
-    elif sentiment == "neutral":
-        query = query.filter(
-            Comment.sentiment_score >= 0.4,
-            Comment.sentiment_score <= 0.6
-        )
-
-    # 总数
     total = query.count()
 
-    # 排序
     if sort_by == "sentiment_score":
         query = query.order_by(Comment.sentiment_score.desc())
+    elif sort_by == "comment_ctime":
+        query = query.order_by(Comment.comment_ctime.desc(), Comment.created_at.desc())
     else:
         order_column = getattr(Comment, sort_by)
         query = query.order_by(order_column.desc())
 
-    # 分页
     offset = (page - 1) * page_size
     comments = query.offset(offset).limit(page_size).all()
 
-    # 构建响应
-    items = [
-        CommentItem(
-            id=c.id,
-            rpid=c.rpid,
-            content=c.content,
-            user_name=c.user_name,
-            sentiment_score=c.sentiment_score,
-            sentiment_label=get_sentiment_label(c.sentiment_score),
-            like_count=c.like_count or 0,
-            created_at=c.created_at
+    items = []
+    for comment in comments:
+        top_scores = EmotionAnalyzer.top_emotions(
+            normalize_emotion_scores(comment.emotion_scores_json),
+            top_k=3,
         )
-        for c in comments
-    ]
+        items.append(CommentItem(
+            id=comment.id,
+            rpid=comment.rpid,
+            content=comment.content,
+            user_name=comment.user_name,
+            commenter_mid=comment.commenter_mid,
+            commenter_level=comment.commenter_level,
+            commenter_sex=comment.commenter_sex,
+            commenter_vip_type=comment.commenter_vip_type or 0,
+            commenter_is_official=bool(comment.commenter_is_official),
+            sentiment_score=comment.sentiment_score,
+            sentiment_label=get_sentiment_label(comment.sentiment_score),
+            emotion_label=comment.emotion_label,
+            emotion_scores=top_scores if top_scores else None,
+            like_count=comment.like_count or 0,
+            reply_count=comment.reply_count or 0,
+            up_replied=bool(comment.up_replied),
+            comment_ctime=comment.comment_ctime,
+            created_at=comment.created_at,
+        ))
 
     return {"total": total, "items": items}
 
@@ -386,32 +660,21 @@ def get_comment_wordcloud(
     bvid: str,
     top_k: int = Query(50, ge=10, le=100),
     sentiment: Optional[str] = Query(None, regex="^(positive|neutral|negative)$"),
-    db: Session = Depends(get_db)
+    emotion: Optional[str] = Query(None, regex=EMOTION_QUERY_REGEX),
+    db: Session = Depends(get_db),
 ):
     """获取单视频评论词云"""
-    # 查询视频
     video = db.query(Video).filter(Video.bvid == bvid).first()
     if not video:
         raise HTTPException(status_code=404, detail="视频不存在")
 
-    # 查询评论
     query = db.query(Comment).filter(Comment.video_id == video.id)
-
-    # 情感筛选
-    if sentiment == "positive":
-        query = query.filter(Comment.sentiment_score > 0.6)
-    elif sentiment == "negative":
-        query = query.filter(Comment.sentiment_score < 0.4)
-    elif sentiment == "neutral":
-        query = query.filter(
-            Comment.sentiment_score >= 0.4,
-            Comment.sentiment_score <= 0.6
-        )
-
+    query = apply_sentiment_filter(query, sentiment)
+    query = apply_emotion_filter(query, emotion)
     comments = query.all()
 
-    # 分词统计
-    word_sentiment_map = {}  # 记录每个词的情感来源
+    word_sentiment_map = {}
+    word_emotion_map = {}
     word_counts = Counter()
 
     for comment in comments:
@@ -419,28 +682,45 @@ def get_comment_wordcloud(
             continue
         words = jieba.cut(comment.content)
         comment_sentiment = get_sentiment_label(comment.sentiment_score)
+        comment_emotion = EmotionAnalyzer.normalize_emotion_label(comment.emotion_label or "")
+        if not comment_emotion:
+            if comment_sentiment == "positive":
+                comment_emotion = "joy"
+            elif comment_sentiment == "negative":
+                comment_emotion = "anger"
+            else:
+                comment_emotion = "neutral"
 
         for word in words:
             word = word.strip()
             if len(word) >= 2 and word not in STOPWORDS:
                 word_counts[word] += 1
-                # 记录词的情感来源（取出现最多的情感）
+
                 if word not in word_sentiment_map:
                     word_sentiment_map[word] = {"positive": 0, "neutral": 0, "negative": 0}
                 if comment_sentiment:
                     word_sentiment_map[word][comment_sentiment] += 1
 
-    # 构建词云数据
+                if word not in word_emotion_map:
+                    word_emotion_map[word] = {label: 0 for label in EMOTION_LABELS}
+                if comment_emotion:
+                    word_emotion_map[word][comment_emotion] += 1
+
     words = []
     for word, count in word_counts.most_common(top_k):
-        # 确定词的主导情感
         sentiment_counts = word_sentiment_map.get(word, {})
-        dominant = max(sentiment_counts, key=sentiment_counts.get) if sentiment_counts else None
+        dominant_sentiment = max(sentiment_counts, key=sentiment_counts.get) if sentiment_counts else None
+
+        emotion_counts = word_emotion_map.get(word, {})
+        dominant_emotion = None
+        if emotion_counts and any(v > 0 for v in emotion_counts.values()):
+            dominant_emotion = max(emotion_counts, key=emotion_counts.get)
 
         words.append(WordcloudItem(
             name=word,
             value=count,
-            sentiment=dominant
+            sentiment=dominant_sentiment,
+            emotion=dominant_emotion,
         ))
 
     return {"words": words}
@@ -450,17 +730,15 @@ def get_comment_wordcloud(
 def get_top_comments(
     bvid: str,
     limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """获取单视频高赞评论TOP"""
-    # 查询视频
     video = db.query(Video).filter(Video.bvid == bvid).first()
     if not video:
         raise HTTPException(status_code=404, detail="视频不存在")
 
-    # 查询高赞评论
     comments = db.query(Comment).filter(
-        Comment.video_id == video.id
+        Comment.video_id == video.id,
     ).order_by(Comment.like_count.desc()).limit(limit).all()
 
     items = [
@@ -469,11 +747,11 @@ def get_top_comments(
             content=c.content,
             user_name=c.user_name,
             sentiment_label=get_sentiment_label(c.sentiment_score),
-            like_count=c.like_count or 0
+            emotion_label=c.emotion_label,
+            like_count=c.like_count or 0,
         )
         for c in comments
     ]
-
     return {"items": items}
 
 
@@ -491,7 +769,6 @@ def compare_video_comments(request: CompareRequest, db: Session = Depends(get_db
         if not video:
             continue
 
-        # 查询评论
         comments = db.query(Comment).filter(Comment.video_id == video.id).all()
         total_count = len(comments)
 
@@ -509,28 +786,24 @@ def compare_video_comments(request: CompareRequest, db: Session = Depends(get_db
                 negative_rate=0,
                 avg_sentiment_score=0.5,
                 avg_like_count=0,
-                top_keywords=[]
+                top_keywords=[],
             ))
             continue
 
-        # 统计情感分布
         positive_count = sum(1 for c in comments if c.sentiment_score and c.sentiment_score > 0.6)
         negative_count = sum(1 for c in comments if c.sentiment_score and c.sentiment_score < 0.4)
         neutral_count = total_count - positive_count - negative_count
 
-        # 计算比率
         positive_rate = round(positive_count / total_count * 100, 1)
         neutral_rate = round(neutral_count / total_count * 100, 1)
         negative_rate = round(negative_count / total_count * 100, 1)
 
-        # 计算平均值
         scores = [c.sentiment_score for c in comments if c.sentiment_score is not None]
         avg_sentiment_score = round(sum(scores) / len(scores), 3) if scores else 0.5
 
         likes = [c.like_count or 0 for c in comments]
         avg_like_count = round(sum(likes) / len(likes), 1) if likes else 0
 
-        # 提取关键词
         word_counts = Counter()
         for comment in comments:
             if not comment.content:
@@ -559,7 +832,7 @@ def compare_video_comments(request: CompareRequest, db: Session = Depends(get_db
             negative_rate=negative_rate,
             avg_sentiment_score=avg_sentiment_score,
             avg_like_count=avg_like_count,
-            top_keywords=top_keywords
+            top_keywords=top_keywords,
         ))
 
     return {"videos": result}
@@ -569,57 +842,47 @@ def compare_video_comments(request: CompareRequest, db: Session = Depends(get_db
 def export_comments_csv(
     bvid: str,
     sentiment: Optional[str] = Query(None, regex="^(positive|neutral|negative)$"),
-    db: Session = Depends(get_db)
+    emotion: Optional[str] = Query(None, regex=EMOTION_QUERY_REGEX),
+    db: Session = Depends(get_db),
 ):
-    """导出单视频评论为CSV"""
-    # 查询视频
+    """导出单视频评论为 CSV"""
     video = db.query(Video).filter(Video.bvid == bvid).first()
     if not video:
         raise HTTPException(status_code=404, detail="视频不存在")
 
-    # 查询评论
     query = db.query(Comment).filter(Comment.video_id == video.id)
-
-    # 情感筛选
-    if sentiment == "positive":
-        query = query.filter(Comment.sentiment_score > 0.6)
-    elif sentiment == "negative":
-        query = query.filter(Comment.sentiment_score < 0.4)
-    elif sentiment == "neutral":
-        query = query.filter(
-            Comment.sentiment_score >= 0.4,
-            Comment.sentiment_score <= 0.6
-        )
-
+    query = apply_sentiment_filter(query, sentiment)
+    query = apply_emotion_filter(query, emotion)
     comments = query.order_by(Comment.like_count.desc()).limit(1000).all()
 
-    # 创建CSV
     output = io.StringIO()
     writer = csv.writer(output)
+    writer.writerow(["用户名", "评论内容", "情感分数", "情感标签", "主情绪", "点赞数", "回复数", "用户等级", "VIP类型", "认证用户", "评论时间"])
 
-    # 写入表头
-    writer.writerow(['用户名', '评论内容', '情感分数', '情感标签', '点赞数', '评论时间'])
-
-    # 写入数据
     for comment in comments:
         writer.writerow([
-            comment.user_name or '',
-            comment.content or '',
-            round(comment.sentiment_score, 3) if comment.sentiment_score else '',
-            get_sentiment_label(comment.sentiment_score) or '',
+            comment.user_name or "",
+            comment.content or "",
+            round(comment.sentiment_score, 3) if comment.sentiment_score is not None else "",
+            get_sentiment_label(comment.sentiment_score) or "",
+            comment.emotion_label or "",
             comment.like_count or 0,
-            comment.created_at.strftime('%Y-%m-%d %H:%M:%S') if comment.created_at else ''
+            comment.reply_count or 0,
+            comment.commenter_level if comment.commenter_level is not None else "",
+            comment.commenter_vip_type if comment.commenter_vip_type is not None else "",
+            "是" if comment.commenter_is_official else "否",
+            (comment.comment_ctime or comment.created_at).strftime("%Y-%m-%d %H:%M:%S")
+            if (comment.comment_ctime or comment.created_at) else "",
         ])
 
-    # 返回CSV文件
     output.seek(0)
-    bom = '\ufeff'
+    bom = "\ufeff"
     content = bom + output.getvalue()
 
     return StreamingResponse(
-        iter([content.encode('utf-8')]),
-        media_type='text/csv; charset=utf-8',
+        iter([content.encode("utf-8")]),
+        media_type="text/csv; charset=utf-8",
         headers={
-            'Content-Disposition': f'attachment; filename=comments_{bvid}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-        }
+            "Content-Disposition": f"attachment; filename=comments_{bvid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        },
     )

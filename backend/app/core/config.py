@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     # B站Cookie（可选，用于获取更多数据）
     BILIBILI_COOKIE: str = ""
 
+    # 头像上传配置
+    UPLOAD_DIR: str = "uploads"
+    AVATAR_MAX_SIZE: int = 2 * 1024 * 1024  # 2MB
+    AVATAR_ALLOWED_EXTENSIONS: list = ["jpg", "jpeg", "png", "gif", "webp"]
+
+    # 细粒度情绪模型配置
+    EMOTION_MODEL_NAME: str = "SchuylerH/bert-multilingual-go-emtions"
+    EMOTION_DEVICE: str = "cpu"
+    EMOTION_MAX_LENGTH: int = 256
+    EMOTION_BATCH_SIZE: int = 16
+
     class Config:
         env_file = ".env"
 

@@ -4,7 +4,7 @@ B站数据采集服务
 import time
 import random
 import requests
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from functools import wraps
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -12,6 +12,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.models import Video, Comment
 from app.core.database import SessionLocal
+from app.services.emotion import EmotionAnalyzer
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class BilibiliCrawler:
@@ -21,6 +31,7 @@ class BilibiliCrawler:
 
     def __init__(self, cookie: str = ""):
         self.session = requests.Session()
+        self.emotion = EmotionAnalyzer()
         self.session.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Referer': 'https://www.bilibili.com',
@@ -101,6 +112,60 @@ class BilibiliCrawler:
             return None
 
     @rate_limit(interval=2.0)
+    def get_video_comments_main(
+        self,
+        oid: int,
+        next_cursor: int = 0,
+        page_size: int = 20,
+        mode: int = 3
+    ) -> Optional[Dict]:
+        """获取视频评论（新版主评论接口）"""
+        url = f"{self.BASE_URL}/x/v2/reply/main"
+        params = {
+            "type": 1,
+            "oid": oid,
+            "mode": mode,
+            "next": next_cursor,
+            "ps": page_size,
+        }
+
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+            data = resp.json()
+            if data.get("code") == 0:
+                return data.get("data") or {}
+            return None
+        except Exception as e:
+            print(f"获取评论(main)失败: {e}")
+            return None
+
+    @staticmethod
+    def parse_comment_user_profile(comment_raw: Dict) -> Dict:
+        """从评论原始数据提取用户画像字段"""
+        member = comment_raw.get("member") or {}
+        level_info = member.get("level_info") or {}
+        vip_info = member.get("vip") or {}
+        official = member.get("official_verify") or {}
+        up_action = comment_raw.get("up_action") or {}
+        raw_sex = (member.get("sex") or "").strip()
+        if raw_sex not in {"男", "女"}:
+            raw_sex = "未知"
+
+        ctime = _to_int(comment_raw.get("ctime"), 0)
+        comment_ctime = datetime.fromtimestamp(ctime) if ctime > 0 else None
+
+        return {
+            "commenter_mid": _to_int(member.get("mid"), 0) or None,
+            "commenter_level": _to_int(level_info.get("current_level"), 0) or None,
+            "commenter_sex": raw_sex,
+            "commenter_vip_type": _to_int(vip_info.get("vipType"), 0),
+            "commenter_is_official": _to_int(official.get("type"), -1) >= 0,
+            "reply_count": _to_int(comment_raw.get("rcount"), 0),
+            "up_replied": bool(up_action.get("reply")),
+            "comment_ctime": comment_ctime,
+        }
+
+    @rate_limit(interval=2.0)
     def get_video_danmakus(self, cid: int, max_count: int = 500) -> Optional[List[Dict]]:
         """获取视频弹幕
 
@@ -172,6 +237,66 @@ class BilibiliCrawler:
             print(f"获取排行榜失败: {e}")
             return None
 
+    # B站子分区 → 主分区映射表
+    SUBCATEGORY_MAP = {
+        # 动画
+        'MAD·AMV': '动画', 'MMD·3D': '动画', '动漫杂谈': '动画',
+        '动态漫·广播剧': '动画', '同人·手书': '动画', '国产原创相关': '动画',
+        '特摄': '动画',
+        # 音乐
+        '原创音乐': '音乐', '翻唱': '音乐', 'VOCALOID·UTAU': '音乐',
+        '演奏': '音乐', 'MV': '音乐', '音乐现场': '音乐',
+        '音乐教学': '音乐', '乐评盘点': '音乐', '音乐综合': '音乐',
+        # 舞蹈
+        '宅舞': '舞蹈', '国风舞蹈': '舞蹈', '街舞': '舞蹈',
+        '明星舞蹈': '舞蹈', '舞蹈综合': '舞蹈', '颜值·网红舞': '舞蹈',
+        # 游戏
+        '单机游戏': '游戏', '手机游戏': '游戏', '网络游戏': '游戏',
+        '电子竞技': '游戏', '桌游棋牌': '游戏', '音游': '游戏', 'GMV': '游戏',
+        # 知识
+        '科学科普': '知识', '社科·法律·心理': '知识', '人文历史': '知识',
+        '校园学习': '知识', '职业职场': '知识', '财经商业': '知识',
+        '野生技能协会': '知识', '设计·创意': '知识',
+        # 科技
+        '数码': '科技', '软件应用': '科技', '计算机技术': '科技',
+        '极客DIY': '科技', '科工机械': '科技',
+        # 运动
+        '篮球': '运动', '足球': '运动', '竞技体育': '运动',
+        '运动综合': '运动', '运动文化': '运动', '健身': '运动',
+        # 汽车
+        '赛车': '汽车', '改装玩车': '汽车', '新能源车': '汽车',
+        '购车攻略': '汽车', '摩托车': '汽车', '汽车生活': '汽车',
+        # 生活
+        '搞笑': '生活', '日常': '生活', '家居房产': '生活',
+        '手工': '生活', '亲子': '生活', '出行': '生活', '三农': '生活',
+        '绘画': '生活',
+        # 美食
+        '美食制作': '美食', '美食测评': '美食', '美食记录': '美食',
+        '美食侦探': '美食', '田园美食': '美食',
+        # 动物圈
+        '喵星人': '动物圈', '汪星人': '动物圈', '小宠异宠': '动物圈',
+        '野生动物': '动物圈', '动物二创': '动物圈', '动物综合': '动物圈',
+        # 鬼畜
+        '鬼畜调教': '鬼畜', '鬼畜剧场': '鬼畜', '音MAD': '鬼畜',
+        '人力VOCALOID': '鬼畜', '配音': '鬼畜',
+        # 时尚
+        '美妆护肤': '时尚', '穿搭': '时尚', '时尚潮流': '时尚', '仿妆cos': '时尚',
+        # 娱乐
+        '娱乐杂谈': '娱乐', '娱乐粉丝创作': '娱乐', '明星综合': '娱乐', '综艺': '娱乐',
+        # 影视
+        '影视杂谈': '影视', '影视剪辑': '影视', '影视整活': '影视',
+        '预告·资讯': '影视', '短片': '影视', '小剧场': '影视',
+        # 资讯
+        '热点': '资讯', '社会': '资讯', '综合': '资讯',
+    }
+
+    @staticmethod
+    def map_category(sub_category: str) -> str:
+        """将B站子分区映射为主分区"""
+        if not sub_category:
+            return sub_category
+        return BilibiliCrawler.SUBCATEGORY_MAP.get(sub_category, sub_category)
+
     def parse_video_data(self, raw_data: Dict) -> Dict:
         """解析视频数据为统一格式"""
         stat = raw_data.get('stat', {})
@@ -182,6 +307,8 @@ class BilibiliCrawler:
         category = (raw_data.get('tname', '') or
                     raw_data.get('tnamev2', '') or
                     raw_data.get('tname_v2', ''))
+        # 映射子分区为主分区
+        category = self.map_category(category)
 
         return {
             'bvid': raw_data.get('bvid'),
@@ -211,7 +338,8 @@ class BilibiliCrawler:
             # 检查视频是否已存在
             existing = db.query(Video).filter(Video.bvid == video_data['bvid']).first()
             if existing:
-                # 更新统计数据
+                # 更新统计数据和标题
+                existing.title = video_data['title']
                 existing.play_count = video_data['play_count']
                 existing.like_count = video_data['like_count']
                 existing.coin_count = video_data['coin_count']
@@ -219,8 +347,10 @@ class BilibiliCrawler:
                 existing.favorite_count = video_data['favorite_count']
                 existing.danmaku_count = video_data['danmaku_count']
                 existing.comment_count = video_data['comment_count']
+                existing.cover_url = video_data.get('cover_url')
                 db.commit()
                 db.refresh(existing)
+                print(f"  [更新] {video_data['bvid']} 播放:{existing.play_count} 点赞:{existing.like_count}")
                 return existing
 
             # 转换时间戳为 datetime
@@ -279,16 +409,38 @@ class BilibiliCrawler:
                 if existing:
                     continue
 
-                # 创建评论记录（暂不做情感分析）
+                # 细粒度情绪分析 + 三分类兼容分数
+                emotion_result = self.emotion.analyze_emotion(content)
+                profile = self.parse_comment_user_profile(comment_raw)
+
+                # 创建评论记录，使用 SAVEPOINT 防止重复键冲突丢失整批数据
                 comment = Comment(
                     rpid=rpid,
                     video_id=video_id,
                     content=content,
                     user_name=user_name,
-                    like_count=like_count
+                    commenter_mid=profile["commenter_mid"],
+                    commenter_level=profile["commenter_level"],
+                    commenter_sex=profile["commenter_sex"],
+                    commenter_vip_type=profile["commenter_vip_type"],
+                    commenter_is_official=profile["commenter_is_official"],
+                    sentiment_score=emotion_result.sentiment_score,
+                    emotion_label=emotion_result.emotion_label,
+                    emotion_scores_json=emotion_result.emotion_scores,
+                    emotion_model_version=emotion_result.model_version,
+                    emotion_analyzed_at=emotion_result.analyzed_at,
+                    like_count=like_count,
+                    reply_count=profile["reply_count"],
+                    up_replied=profile["up_replied"],
+                    comment_ctime=profile["comment_ctime"],
                 )
-                db.add(comment)
-                saved_count += 1
+                try:
+                    nested = db.begin_nested()
+                    db.add(comment)
+                    db.flush()
+                    saved_count += 1
+                except IntegrityError:
+                    nested.rollback()
 
             db.commit()
             return saved_count
@@ -297,6 +449,204 @@ class BilibiliCrawler:
             db.rollback()
             print(f"保存评论失败: {e}")
             return saved_count
+
+    @rate_limit(interval=2.0)
+    def get_weekly_series_list(self) -> Optional[List[Dict]]:
+        """获取每周必看期数列表"""
+        url = f"{self.BASE_URL}/x/web-interface/popular/series/list"
+        try:
+            resp = self.session.get(url, timeout=10)
+            data = resp.json()
+            if data['code'] == 0:
+                return data['data']['list']
+            return None
+        except Exception as e:
+            print(f"获取每周必看列表失败: {e}")
+            return None
+
+    @rate_limit(interval=2.0)
+    def get_weekly_series_one(self, number: int) -> Optional[List[Dict]]:
+        """获取指定期数的每周必看视频列表"""
+        url = f"{self.BASE_URL}/x/web-interface/popular/series/one"
+        params = {'number': number}
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+            data = resp.json()
+            if data['code'] == 0:
+                return data['data']['list']
+            return None
+        except Exception as e:
+            print(f"获取第{number}期每周必看失败: {e}")
+            return None
+
+    def crawl_weekly_series(
+        self,
+        max_episodes: int = 10,
+        comments_per_video: int = 20,
+        danmakus_per_video: int = 0,
+        start_episode: int = None,
+        log_id: int = None,
+        stop_event=None,
+    ) -> Dict:
+        """采集每周必看历史数据
+
+        Args:
+            max_episodes: 最多采集期数（从最新期往前，None表示全部）
+            comments_per_video: 每视频采集评论数（历史数据建议设小一点）
+            danmakus_per_video: 每视频采集弹幕数（0=不采）
+            start_episode: 从哪期开始（默认最新期）
+            log_id: CrawlLog 记录ID，用于实时更新进度
+
+        Returns:
+            采集统计
+        """
+        from app.models.models import CrawlLog as _CrawlLog
+        db = SessionLocal()
+        stats = {
+            'episodes_done': 0,
+            'videos_saved': 0,
+            'videos_skipped': 0,
+            'comments_saved': 0,
+            'danmakus_saved': 0,
+            'errors': [],
+            'stopped': False,
+        }
+
+        try:
+            # 获取期数列表
+            print("正在获取每周必看期数列表...")
+            series_list = self.get_weekly_series_list()
+            if not series_list:
+                print("获取期数列表失败")
+                return stats
+
+            # 按期数降序（最新在前）
+            series_list = sorted(series_list, key=lambda x: x.get('number', 0), reverse=True)
+            total = len(series_list)
+            print(f"共发现 {total} 期每周必看")
+
+            # 确定起始期
+            if start_episode is not None:
+                series_list = [s for s in series_list if s.get('number', 0) <= start_episode]
+
+            # 限制期数
+            if max_episodes:
+                series_list = series_list[:max_episodes]
+
+            for ep_idx, episode in enumerate(series_list):
+                if stop_event and stop_event.is_set():
+                    print("[每周必看] 收到停止信号，已停止")
+                    stats['stopped'] = True
+                    break
+                number = episode.get('number')
+                subject = episode.get('subject', f'第{number}期')
+                print(f"\n[{ep_idx+1}/{len(series_list)}] 采集第{number}期: {subject}")
+
+                videos = self.get_weekly_series_one(number)
+                if not videos:
+                    print(f"  第{number}期无数据，跳过")
+                    stats['errors'].append(f"第{number}期: 获取视频列表失败")
+                    continue
+
+                print(f"  本期 {len(videos)} 个视频")
+
+                for v_idx, video_raw in enumerate(videos, 1):
+                    bvid = video_raw.get('bvid')
+                    try:
+                        # 已有视频只更新数据，不重复采集评论
+                        existing = db.query(Video).filter(Video.bvid == bvid).first()
+                        if existing:
+                            video_data = self.parse_video_data(video_raw)
+                            existing.play_count = video_data['play_count']
+                            existing.like_count = video_data['like_count']
+                            existing.coin_count = video_data['coin_count']
+                            existing.danmaku_count = video_data['danmaku_count']
+                            existing.comment_count = video_data['comment_count']
+                            db.commit()
+                            stats['videos_skipped'] += 1
+                            print(f"  [{v_idx}/{len(videos)}] {bvid} 已存在，更新数据")
+                            continue
+
+                        # 获取详情（包含 aid/cid）
+                        detail = self.get_video_detail(bvid)
+                        if not detail:
+                            stats['errors'].append(f"{bvid}: 获取详情失败")
+                            continue
+
+                        video_data = self.parse_video_data(detail)
+                        video = self.save_video(video_data, db)
+
+                        if video:
+                            stats['videos_saved'] += 1
+                            print(f"  [{v_idx}/{len(videos)}] {bvid} 保存成功: {video.title[:25]}")
+
+                            # 采集评论
+                            if comments_per_video > 0:
+                                oid = detail.get('aid')
+                                if oid:
+                                    page_size = 20
+                                    pages = max(1, comments_per_video // page_size)
+                                    for page in range(1, pages + 1):
+                                        cmts = self.get_video_comments(oid, page=page, page_size=page_size)
+                                        if cmts:
+                                            cnt = self.save_comments(cmts, video.id, db)
+                                            stats['comments_saved'] += cnt
+
+                            # 采集弹幕
+                            if danmakus_per_video > 0:
+                                cid = detail.get('cid')
+                                if cid:
+                                    danmakus = self.get_video_danmakus(cid, max_count=danmakus_per_video)
+                                    if danmakus:
+                                        from app.models.models import Danmaku
+                                        existing_contents = set(
+                                            d[0] for d in db.query(Danmaku.content)
+                                            .filter(Danmaku.video_id == video.id).all()
+                                        )
+                                        for dm in danmakus:
+                                            content = dm.get('content', '').strip()
+                                            if content and content not in existing_contents:
+                                                db.add(Danmaku(
+                                                    video_id=video.id,
+                                                    content=content,
+                                                    send_time=dm.get('send_time'),
+                                                    color=dm.get('color'),
+                                                ))
+                                                existing_contents.add(content)
+                                                stats['danmakus_saved'] += 1
+                                        db.commit()
+
+                    except Exception as e:
+                        stats['errors'].append(f"{bvid}: {e}")
+                        print(f"  [{v_idx}] {bvid} 处理失败: {e}")
+
+                stats['episodes_done'] += 1
+                print(f"  第{number}期完成，累计入库: {stats['videos_saved']} 视频 / {stats['comments_saved']} 评论 / {stats['danmakus_saved']} 弹幕")
+
+                # 实时更新日志进度
+                if log_id:
+                    log_row = db.query(_CrawlLog).filter(_CrawlLog.id == log_id).first()
+                    if log_row:
+                        log_row.video_count = stats['videos_saved'] + stats['videos_skipped']
+                        log_row.comment_count = stats['comments_saved']
+                        log_row.danmaku_count = stats['danmakus_saved']
+                        db.commit()
+
+        except Exception as e:
+            print(f"全局错误: {e}")
+            stats['errors'].append(f"全局错误: {e}")
+        finally:
+            db.close()
+
+        print(f"\n====== 每周必看采集完成 ======")
+        print(f"期数: {stats['episodes_done']} 期")
+        print(f"新增视频: {stats['videos_saved']}")
+        print(f"已有跳过: {stats['videos_skipped']}")
+        print(f"评论: {stats['comments_saved']}")
+        print(f"弹幕: {stats['danmakus_saved']}")
+        if stats['errors']:
+            print(f"错误数: {len(stats['errors'])}")
+        return stats
 
     def crawl_once(self, max_videos: int = 10, comments_per_video: int = 100) -> Dict:
         """单次采集流程

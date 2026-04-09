@@ -62,6 +62,14 @@ export const getRoomRanking = () => {
 }
 
 /**
+ * 获取B站热门直播间列表
+ * @returns {Promise} { rooms: [...], total: number }
+ */
+export const getPopularRooms = () => {
+  return api.get('/live/popular')
+}
+
+/**
  * 获取后端服务状态（Kafka、Redis）
  * @returns {Promise} { kafka: {...}, redis: {...}, active_rooms }
  */

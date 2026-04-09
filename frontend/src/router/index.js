@@ -55,10 +55,22 @@ const routes = [
         meta: { requiresAuth: true }
       },
       {
+        path: 'content-planner',
+        name: 'ContentPlanner',
+        component: () => import('@/views/ContentPlanner.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
         path: 'admin',
         name: 'Admin',
         component: () => import('@/views/Admin.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: () => import('@/views/Profile.vue'),
+        meta: { requiresAuth: true }
       }
     ]
   }

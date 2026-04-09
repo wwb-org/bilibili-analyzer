@@ -60,6 +60,143 @@
       </div>
     </div>
 
+    <!-- 数据概览模块 -->
+    <div class="panel" v-loading="dataOverviewLoading">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h3 class="panel-title">数据概览</h3>
+          <span class="panel-subtitle">ODS / DWD / DWS 三层数据按日期统计</span>
+        </div>
+        <el-button text type="primary" @click="fetchDataOverview">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+      </div>
+      <div class="panel-body" v-if="dataOverview">
+        <!-- 总量卡片 -->
+        <div class="overview-cards">
+          <div class="overview-card">
+            <div class="overview-value">{{ formatNum(dataOverview.ods.videos) }}</div>
+            <div class="overview-label">视频总数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">{{ formatNum(dataOverview.ods.comments) }}</div>
+            <div class="overview-label">评论总数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">{{ formatNum(dataOverview.ods.danmakus) }}</div>
+            <div class="overview-label">弹幕总数</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-value">{{ dataOverview.daily_details?.length || 0 }}</div>
+            <div class="overview-label">数据天数</div>
+          </div>
+        </div>
+        <div class="overview-date-range" v-if="dataOverview.ods.earliest_date">
+          采集范围: {{ dataOverview.ods.earliest_date }} ~ {{ dataOverview.ods.latest_date }}
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="overview-actions">
+          <el-button size="small" type="warning" @click="handleBatchFillMissing">
+            一键补全未处理日期
+          </el-button>
+        </div>
+
+        <!-- 日期明细表格 -->
+        <el-table
+          :data="dataOverview.daily_details"
+          stripe
+          size="small"
+          max-height="480"
+          style="width: 100%"
+          :row-class-name="({ row }) => row.etl_status === 'missing' && row.ods_videos > 0 ? 'row-missing' : ''"
+        >
+          <el-table-column prop="date" label="日期" width="110" fixed />
+          <el-table-column label="ODS（原始数据）" align="center">
+            <el-table-column prop="ods_videos" label="视频" width="70" align="center" />
+            <el-table-column prop="ods_comments" label="评论" width="70" align="center" />
+            <el-table-column prop="ods_danmakus" label="弹幕" width="70" align="center" />
+          </el-table-column>
+          <el-table-column label="DWD（明细层）" align="center">
+            <el-table-column prop="dwd_video_snapshot" label="快照" width="70" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'zero-val': !row.dwd_video_snapshot }">{{ row.dwd_video_snapshot || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="dwd_comment_daily" label="评论" width="70" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'zero-val': !row.dwd_comment_daily }">{{ row.dwd_comment_daily || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="dwd_keyword_daily" label="热词" width="70" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'zero-val': !row.dwd_keyword_daily }">{{ row.dwd_keyword_daily || '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table-column>
+          <el-table-column label="DWS（汇总层）" align="center">
+            <el-table-column label="统计" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_stats" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="分区" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_category" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="情感" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_sentiment" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="趋势*" width="60" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_video_trend" color="#67C23A"><CircleCheck /></el-icon>
+                <span v-else class="optional-mark">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="热词" width="50" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.dws_keyword_stats" color="#67C23A"><CircleCheck /></el-icon>
+                <el-icon v-else color="#dcdfe6"><CircleClose /></el-icon>
+              </template>
+            </el-table-column>
+          </el-table-column>
+          <el-table-column label="ETL" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="getEtlStatusType(row.etl_status)" size="small">
+                {{ getEtlStatusText(row.etl_status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.etl_status !== 'complete'"
+                type="primary"
+                link
+                size="small"
+                :loading="etlRunningDate === row.date"
+                @click="handleRunETLForDate(row.date)"
+              >
+                执行ETL
+              </el-button>
+              <span v-else class="done-text">已完成</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="overview-tip">
+          * 趋势为可选项：需要多日快照数据，未生成不影响 ETL 完整性。
+        </div>
+      </div>
+      <el-empty v-else-if="!dataOverviewLoading" description="暂无数据" :image-size="60" />
+    </div>
+
     <!-- 数据采集模块 -->
     <div class="panel">
       <div class="panel-header">
@@ -204,16 +341,98 @@ BV1zz4y1c7mZ
               </el-form>
             </div>
           </el-tab-pane>
+
+          <!-- Tab 3: 每周必看采集 -->
+          <el-tab-pane label="每周必看采集" name="weekly">
+            <div class="weekly-crawl-section">
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-bottom: 16px"
+              >
+                <template #title>
+                  B站每周必看共 200+ 期，每期约 20 个视频。<br>
+                  <b>首次使用</b>：选"全部期数 + 仅视频数据"，一次性入库 4000+ 条历史数据（约 2-3 小时）。<br>
+                  <b>日常更新</b>：每周选"最新 1 期"补充最新一期即可。
+                </template>
+              </el-alert>
+
+              <el-form :inline="true" :model="weeklyCrawlForm" class="crawl-config">
+                <el-form-item label="采集范围">
+                  <el-select v-model="weeklyCrawlForm.mode" style="width: 140px">
+                    <el-option label="全部期数" value="all" />
+                    <el-option label="最新 N 期" value="latest" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="期数" v-if="weeklyCrawlForm.mode === 'latest'">
+                  <el-input-number
+                    v-model="weeklyCrawlForm.max_episodes"
+                    :min="1"
+                    :max="300"
+                    :step="1"
+                    controls-position="right"
+                    style="width: 110px"
+                  />
+                </el-form-item>
+                <el-form-item label="每视频评论数">
+                  <el-select v-model="weeklyCrawlForm.comments_per_video" style="width: 130px">
+                    <el-option label="不采评论" :value="0" />
+                    <el-option label="20 条" :value="20" />
+                    <el-option label="50 条" :value="50" />
+                    <el-option label="100 条" :value="100" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="每视频弹幕数">
+                  <el-select v-model="weeklyCrawlForm.danmakus_per_video" style="width: 130px">
+                    <el-option label="不采弹幕（最快）" :value="0" />
+                    <el-option label="200 条" :value="200" />
+                    <el-option label="500 条" :value="500" />
+                    <el-option label="1000 条" :value="1000" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button
+                    type="primary"
+                    :loading="weeklyCrawlLoading"
+                    @click="handleStartWeeklyCrawl"
+                  >
+                    <el-icon><VideoPlay /></el-icon>
+                    开始采集
+                  </el-button>
+                </el-form-item>
+              </el-form>
+
+              <el-text type="info" size="small" v-if="weeklyCrawlForm.mode === 'all'">
+                预计入库 4000+ 个视频，耗时 2-3 小时（后台运行，可关闭页面）
+              </el-text>
+              <el-text type="info" size="small" v-else>
+                预计入库约 {{ weeklyCrawlForm.max_episodes * 20 }} 个视频
+              </el-text>
+            </div>
+          </el-tab-pane>
         </el-tabs>
 
         <!-- 采集日志表格 -->
         <div class="log-section">
           <div class="section-header">
             <span class="section-title">最近采集日志</span>
-            <el-button text type="primary" @click="fetchCrawlLogs">
-              <el-icon><Refresh /></el-icon>
-              刷新
-            </el-button>
+            <div class="section-actions">
+              <el-button
+                v-if="isCrawlingNow"
+                type="danger"
+                size="small"
+                :loading="stopLoading"
+                @click="handleStopCrawl"
+              >
+                <el-icon><VideoPause /></el-icon>
+                停止采集
+              </el-button>
+              <el-button text type="primary" @click="fetchCrawlLogs">
+                <el-icon><Refresh /></el-icon>
+                刷新
+              </el-button>
+            </div>
           </div>
           <el-table :data="crawlLogs" stripe style="width: 100%" v-loading="logsLoading">
             <el-table-column prop="started_at" label="开始时间" width="180">
@@ -288,7 +507,7 @@ BV1zz4y1c7mZ
       <div class="panel-header">
         <div class="panel-title-group">
           <h3 class="panel-title">机器学习模型</h3>
-          <span class="panel-subtitle">热度预测与相似推荐模型管理</span>
+          <span class="panel-subtitle">热度预测、投币预测与相似推荐模型管理</span>
         </div>
         <el-button text type="primary" @click="fetchModelInfo">
           <el-icon><Refresh /></el-icon>
@@ -367,6 +586,41 @@ BV1zz4y1c7mZ
               {{ modelInfo.recommender?.loaded ? '重新训练' : '训练模型' }}
             </el-button>
           </div>
+
+          <div class="model-card">
+            <div class="model-card-header">
+              <el-icon class="model-icon" :class="{ 'is-loaded': modelInfo.predictor?.coin_model_loaded }">
+                <Coin />
+              </el-icon>
+              <div class="model-info">
+                <span class="model-name">投币预测模型</span>
+                <el-tag v-if="modelInfo.predictor?.coin_model_loaded" type="success" size="small">已加载</el-tag>
+                <el-tag v-else type="warning" size="small">未加载</el-tag>
+              </div>
+            </div>
+            <div class="model-details" v-if="modelInfo.predictor?.coin_model_loaded">
+              <div class="detail-item">
+                <span class="detail-label">模型类型</span>
+                <span class="detail-value">XGBoost</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">特征数量</span>
+                <span class="detail-value">{{ modelInfo.predictor?.feature_count || '-' }}</span>
+              </div>
+            </div>
+            <div class="model-details" v-else>
+              <p class="no-model-hint">模型尚未训练，请点击下方按钮训练</p>
+            </div>
+            <el-button
+              type="primary"
+              :loading="trainCoinPredictorLoading"
+              @click="handleTrainCoinPredictor"
+              class="train-btn"
+            >
+              <el-icon><Cpu /></el-icon>
+              {{ modelInfo.predictor?.coin_model_loaded ? '重新训练' : '训练模型' }}
+            </el-button>
+          </div>
         </div>
 
         <!-- 一键训练 -->
@@ -399,6 +653,14 @@ BV1zz4y1c7mZ
                 ({{ lastTrainResult.predictor.train_samples }} 样本, R²={{ lastTrainResult.predictor.test_r2?.toFixed(3) }})
               </span>
             </el-descriptions-item>
+            <el-descriptions-item label="投币模型">
+              <el-tag v-if="lastTrainResult.coin_predictor?.success" type="success" size="small">成功</el-tag>
+              <el-tag v-else-if="lastTrainResult.coin_predictor" type="danger" size="small">失败</el-tag>
+              <el-tag v-else type="info" size="small">未训练</el-tag>
+              <span v-if="lastTrainResult.coin_predictor?.train_samples" class="result-detail">
+                ({{ lastTrainResult.coin_predictor.train_samples }} 样本, R²={{ lastTrainResult.coin_predictor.test_r2?.toFixed(3) }})
+              </span>
+            </el-descriptions-item>
             <el-descriptions-item label="推荐模型">
               <el-tag v-if="lastTrainResult.recommender?.success" type="success" size="small">成功</el-tag>
               <el-tag v-else type="danger" size="small">失败</el-tag>
@@ -406,9 +668,9 @@ BV1zz4y1c7mZ
                 ({{ lastTrainResult.recommender.video_count }} 视频)
               </span>
             </el-descriptions-item>
-            <el-descriptions-item label="错误信息" v-if="lastTrainResult.predictor?.error || lastTrainResult.recommender?.error">
+            <el-descriptions-item label="错误信息" v-if="lastTrainResult.predictor?.error || lastTrainResult.coin_predictor?.error || lastTrainResult.recommender?.error">
               <el-text type="danger" size="small">
-                {{ lastTrainResult.predictor?.error || lastTrainResult.recommender?.error }}
+                {{ lastTrainResult.predictor?.error || lastTrainResult.coin_predictor?.error || lastTrainResult.recommender?.error }}
               </el-text>
             </el-descriptions-item>
           </el-descriptions>
@@ -545,10 +807,11 @@ BV1zz4y1c7mZ
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Connection,
+  Coin,
   DataLine,
   Message,
   Timer,
@@ -571,6 +834,8 @@ import {
   getCrawlLogs,
   startCrawl,
   startBatchCrawl,
+  startWeeklyCrawl,
+  stopCrawl,
   getETLStatus,
   runETL,
   backfillETL,
@@ -579,14 +844,19 @@ import {
   getServicesStatus,
   getBilibiliStatus,
   verifyBilibiliCookie,
-  updateBilibiliCookie
+  updateBilibiliCookie,
+  getDataOverview
 } from '@/api/admin'
 import {
   getModelInfo,
   trainPredictor,
+  trainCoinPredictor,
   trainRecommender,
   trainAllModels
 } from '@/api/ml'
+import { useAdminStore } from '@/store/admin'
+
+const adminStore = useAdminStore()
 
 // ========== 状态 ==========
 const redisStatus = ref(false)
@@ -606,8 +876,11 @@ const crawlConfig = reactive({
   danmakus_per_video: 500
 })
 const crawlLoading = ref(false)
+const stopLoading = ref(false)
 const crawlLogs = ref([])
 const logsLoading = ref(false)
+let logPollTimer = null
+const isCrawlingNow = computed(() => crawlLogs.value.some(l => l.status === 'running'))
 const crawlTab = ref('popular')
 
 // 批量采集
@@ -622,8 +895,18 @@ const parsedBvids = reactive({
   invalid: []
 })
 
-const users = ref([])
+// 每周必看采集
+const weeklyCrawlForm = reactive({
+  mode: 'latest',
+  max_episodes: 1,
+  comments_per_video: 0,
+  danmakus_per_video: 0,
+})
+const weeklyCrawlLoading = ref(false)
+
+
 const usersLoading = ref(false)
+const users = ref([])
 
 const showBackfillDialog = ref(false)
 const backfillLoading = ref(false)
@@ -644,9 +927,15 @@ const cookieVerifyResult = ref(null)
 // ML 模型管理
 const modelInfo = ref({ predictor: {}, recommender: {} })
 const trainPredictorLoading = ref(false)
+const trainCoinPredictorLoading = ref(false)
 const trainRecommenderLoading = ref(false)
 const trainAllLoading = ref(false)
 const lastTrainResult = ref(null)
+
+// 数据概览
+const dataOverview = ref(null)
+const dataOverviewLoading = ref(false)
+const etlRunningDate = ref(null)
 
 // ========== 方法 ==========
 const fetchServicesStatus = async () => {
@@ -683,10 +972,28 @@ const fetchETLStatus = async () => {
   }
 }
 
+const startLogPolling = () => {
+  if (logPollTimer) return
+  logPollTimer = setInterval(async () => {
+    try {
+      crawlLogs.value = await getCrawlLogs(20)
+    } catch { /* ignore */ }
+    const stillRunning = crawlLogs.value.some(l => l.status === 'running')
+    if (!stillRunning) {
+      clearInterval(logPollTimer)
+      logPollTimer = null
+    }
+  }, 5000)
+}
+
 const fetchCrawlLogs = async () => {
   logsLoading.value = true
   try {
     crawlLogs.value = await getCrawlLogs(20)
+    // 有任务执行中时启动自动轮询，全部完成时停止
+    if (crawlLogs.value.some(l => l.status === 'running')) {
+      startLogPolling()
+    }
   } catch (e) {
     console.error('获取采集日志失败', e)
   } finally {
@@ -716,15 +1023,34 @@ const handleStartCrawl = async () => {
     crawlLoading.value = true
     await startCrawl(crawlConfig)
     ElMessage.success('采集任务已启动，请稍后刷新日志查看进度')
-
-    // 延迟刷新日志
     setTimeout(fetchCrawlLogs, 3000)
+    startLogPolling()
   } catch (e) {
     if (e !== 'cancel') {
       ElMessage.error('启动采集失败: ' + (e.response?.data?.detail || e.message))
     }
   } finally {
     crawlLoading.value = false
+  }
+}
+
+const handleStopCrawl = async () => {
+  try {
+    await ElMessageBox.confirm('确定要停止当前采集任务吗？任务将在处理完当前视频后停止。', '停止采集', {
+      type: 'warning',
+      confirmButtonText: '停止',
+      cancelButtonText: '取消'
+    })
+    stopLoading.value = true
+    await stopCrawl()
+    ElMessage.success('已发送停止信号，任务将在当前视频处理完成后停止')
+    setTimeout(fetchCrawlLogs, 3000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('停止失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    stopLoading.value = false
   }
 }
 
@@ -804,8 +1130,8 @@ const handleStartBatchCrawl = async () => {
     parsedBvids.valid = []
     parsedBvids.invalid = []
 
-    // 延迟刷新日志
     setTimeout(fetchCrawlLogs, 3000)
+    startLogPolling()
   } catch (e) {
     if (e !== 'cancel') {
       ElMessage.error('启动采集失败: ' + (e.response?.data?.detail || e.message))
@@ -814,6 +1140,39 @@ const handleStartBatchCrawl = async () => {
     batchCrawlLoading.value = false
   }
 }
+
+// ========== 每周必看采集方法 ==========
+const handleStartWeeklyCrawl = async () => {
+  const isAll = weeklyCrawlForm.mode === 'all'
+  const episodes = isAll ? null : weeklyCrawlForm.max_episodes
+  const label = isAll ? '全部期数（200+ 期，约 4000 个视频）' : `最新 ${episodes} 期（约 ${episodes * 20} 个视频）`
+  const commentLabel = weeklyCrawlForm.comments_per_video === 0 ? '不采评论' : `每视频 ${weeklyCrawlForm.comments_per_video} 条评论`
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要采集每周必看 ${label}，${commentLabel}？\n任务将在后台运行，可通过下方日志查看进度。`,
+      '确认采集',
+      { confirmButtonText: '开始', cancelButtonText: '取消', type: 'info' }
+    )
+
+    weeklyCrawlLoading.value = true
+    await startWeeklyCrawl({
+      max_episodes: episodes,
+      comments_per_video: weeklyCrawlForm.comments_per_video,
+      danmakus_per_video: weeklyCrawlForm.danmakus_per_video,
+    })
+    ElMessage.success('每周必看采集任务已启动，请稍后刷新日志查看进度')
+    setTimeout(fetchCrawlLogs, 2000)
+    startLogPolling()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('启动失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    weeklyCrawlLoading.value = false
+  }
+}
+
 
 const toggleETLScheduler = async () => {
   try {
@@ -984,6 +1343,35 @@ const handleTrainRecommender = async () => {
   }
 }
 
+const handleTrainCoinPredictor = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要训练投币预测模型吗？训练需要一定时间。',
+      '确认训练',
+      { type: 'info' }
+    )
+
+    trainCoinPredictorLoading.value = true
+    const res = await trainCoinPredictor()
+
+    if (res.success) {
+      ElMessage.success('投币预测模型训练成功')
+      lastTrainResult.value = { coin_predictor: res, trained_at: res.trained_at }
+    } else {
+      ElMessage.error('训练失败: ' + (res.error || '未知错误'))
+      lastTrainResult.value = { coin_predictor: res }
+    }
+
+    await fetchModelInfo()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('训练失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    trainCoinPredictorLoading.value = false
+  }
+}
+
 const handleTrainAll = async () => {
   try {
     await ElMessageBox.confirm(
@@ -997,9 +1385,9 @@ const handleTrainAll = async () => {
 
     lastTrainResult.value = res
 
-    if (res.predictor?.success && res.recommender?.success) {
+    if (res.predictor?.success && res.coin_predictor?.success && res.recommender?.success) {
       ElMessage.success('所有模型训练成功')
-    } else if (res.predictor?.success || res.recommender?.success) {
+    } else if (res.predictor?.success || res.coin_predictor?.success || res.recommender?.success) {
       ElMessage.warning('部分模型训练成功，请查看详情')
     } else {
       ElMessage.error('模型训练失败，请查看详情')
@@ -1015,6 +1403,80 @@ const handleTrainAll = async () => {
   }
 }
 
+// ========== 数据概览 ==========
+const fetchDataOverview = async () => {
+  dataOverviewLoading.value = true
+  try {
+    dataOverview.value = await getDataOverview()
+  } catch (e) {
+    console.error('获取数据概览失败', e)
+  } finally {
+    dataOverviewLoading.value = false
+  }
+}
+
+const handleRunETLForDate = async (dateStr) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要对 ${dateStr} 执行 ETL 吗？`,
+      '确认执行',
+      { type: 'info' }
+    )
+    etlRunningDate.value = dateStr
+    await runETL(dateStr)
+    ElMessage.success(`${dateStr} 的 ETL 任务已提交`)
+    setTimeout(fetchDataOverview, 5000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('执行失败: ' + (e.response?.data?.detail || e.message))
+    }
+  } finally {
+    etlRunningDate.value = null
+  }
+}
+
+const handleBatchFillMissing = async () => {
+  if (!dataOverview.value?.daily_details) return
+  const missing = dataOverview.value.daily_details.filter(
+    d => d.etl_status !== 'complete' && (d.ods_videos > 0 || d.ods_comments > 0 || d.ods_danmakus > 0)
+  )
+  if (missing.length === 0) {
+    ElMessage.info('没有需要补全的日期')
+    return
+  }
+  const dates = missing.map(d => d.date).sort()
+  try {
+    await ElMessageBox.confirm(
+      `将对 ${dates.length} 个日期执行 ETL 回填（${dates[0]} ~ ${dates[dates.length - 1]}）`,
+      '确认批量补全',
+      { type: 'info' }
+    )
+    await backfillETL(dates[0], dates[dates.length - 1])
+    ElMessage.success('回填任务已提交')
+    setTimeout(fetchDataOverview, 5000)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('回填失败: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+}
+
+const formatNum = (num) => {
+  if (!num) return '0'
+  if (num >= 10000) return (num / 10000).toFixed(1) + '万'
+  return num.toLocaleString()
+}
+
+const getEtlStatusType = (status) => {
+  const map = { complete: 'success', partial: 'warning', missing: 'danger' }
+  return map[status] || 'info'
+}
+
+const getEtlStatusText = (status) => {
+  const map = { complete: '完整', partial: '部分', missing: '未处理' }
+  return map[status] || status
+}
+
 // ========== 工具函数 ==========
 const formatTime = (time) => {
   if (!time) return '-'
@@ -1027,23 +1489,63 @@ const formatDate = (date) => {
 }
 
 const getStatusType = (status) => {
-  const map = { running: 'warning', success: 'success', failed: 'danger' }
+  const map = { running: 'warning', success: 'success', failed: 'danger', stopped: 'info' }
   return map[status] || 'info'
 }
 
 const getStatusText = (status) => {
-  const map = { running: '执行中', success: '成功', failed: '失败' }
+  const map = { running: '执行中', success: '成功', failed: '失败', stopped: '已停止' }
   return map[status] || status
+}
+
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  adminStore.redisStatus = redisStatus.value
+  adminStore.kafkaStatus = kafkaStatus.value
+  adminStore.bilibiliStatus = { ...bilibiliStatus.value }
+  adminStore.etlStatus = { ...etlStatus.value }
+  adminStore.crawlLogs = crawlLogs.value
+  adminStore.users = users.value
+  adminStore.modelInfo = { ...modelInfo.value }
+  adminStore.dataOverview = dataOverview.value
+  adminStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = () => {
+  redisStatus.value = adminStore.redisStatus
+  kafkaStatus.value = adminStore.kafkaStatus
+  bilibiliStatus.value = { ...adminStore.bilibiliStatus }
+  etlStatus.value = { ...adminStore.etlStatus }
+  crawlLogs.value = adminStore.crawlLogs
+  users.value = adminStore.users
+  modelInfo.value = { ...adminStore.modelInfo }
+  dataOverview.value = adminStore.dataOverview
 }
 
 // ========== 生命周期 ==========
 onMounted(() => {
-  fetchServicesStatus()
-  fetchBilibiliStatus()
-  fetchETLStatus()
-  fetchCrawlLogs()
-  fetchUsers()
-  fetchModelInfo()
+  if (adminStore.isFresh) {
+    restoreFromStore()
+  } else {
+    fetchServicesStatus()
+    fetchBilibiliStatus()
+    fetchETLStatus()
+    fetchCrawlLogs()
+    fetchUsers()
+    fetchModelInfo()
+    fetchDataOverview()
+  }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
+})
+
+onUnmounted(() => {
+  if (logPollTimer) {
+    clearInterval(logPollTimer)
+    logPollTimer = null
+  }
 })
 </script>
 
@@ -1331,7 +1833,7 @@ onMounted(() => {
 /* ML 模型管理样式 */
 .model-status-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
   margin-bottom: 24px;
 }
@@ -1439,6 +1941,10 @@ onMounted(() => {
   .status-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  .model-status-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 768px) {
@@ -1463,5 +1969,71 @@ onMounted(() => {
     flex-direction: column;
     text-align: center;
   }
+
+  .overview-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 数据概览 */
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.overview-card {
+  background: var(--bg-gray-light, #f5f7fa);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.overview-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary, #303133);
+}
+
+.overview-label {
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+  margin-top: 4px;
+}
+
+.overview-date-range {
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+  margin-bottom: 12px;
+}
+
+.overview-actions {
+  margin-bottom: 12px;
+}
+
+.overview-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+}
+
+.zero-val {
+  color: #c0c4cc;
+}
+
+.done-text {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+
+.optional-mark {
+  color: #c0c4cc;
+  font-size: 14px;
+  line-height: 1;
+}
+
+:deep(.row-missing) {
+  background-color: #fef0f0 !important;
 }
 </style>

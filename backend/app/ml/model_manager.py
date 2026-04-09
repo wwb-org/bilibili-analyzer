@@ -20,6 +20,7 @@ import jieba
 
 from app.models import Video
 from app.ml.features import FeatureExtractor
+from app.services.nlp import NLPAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +32,8 @@ MODEL_DIR = BASE_DIR / "ml_models"
 class ModelManager:
     """模型管理器"""
 
-    # 停用词（与 recommender 保持一致）
-    STOP_WORDS = {
-        '的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都',
-        '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会',
-        '着', '没有', '看', '好', '这', '那', '吗', '什么', '他', '她',
-        '们', '这个', '那个', '真的', '可以', '其实', '怎么', '为什么',
-        '啊', '哈哈', '视频', 'bilibili', 'B站', '哔哩哔哩'
-    }
+    # 使用统一停用词
+    STOP_WORDS = NLPAnalyzer.STOP_WORDS
 
     def __init__(self):
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -339,10 +334,99 @@ class ModelManager:
         """训练所有模型"""
         results = {
             "predictor": self.train_predictor(db),
+            "coin_predictor": self.train_coin_predictor(db),
             "recommender": self.train_recommender(db),
             "trained_at": datetime.now().isoformat()
         }
         return results
+
+    def train_coin_predictor(self, db: Session, test_size: float = 0.2) -> Dict:
+        """
+        训练投币量预测模型
+
+        使用现有视频数据训练 XGBoost 回归模型，预测 7 天后的投币量
+
+        Args:
+            db: 数据库会话
+            test_size: 测试集比例
+
+        Returns:
+            训练结果
+        """
+        logger.info("开始训练投币预测模型...")
+
+        # 获取视频数据（需要有投币数据）
+        videos = db.query(Video).filter(
+            Video.play_count > 0,
+            Video.coin_count > 0,
+            Video.publish_time.isnot(None)
+        ).all()
+
+        if len(videos) < 100:
+            return {
+                "success": False,
+                "error": f"训练数据不足，需要至少 100 条有投币数据的视频，当前只有 {len(videos)} 条"
+            }
+
+        # 提取特征和标签
+        X_data = []
+        y_data = []
+
+        for video in videos:
+            features = FeatureExtractor.extract_features(video)
+            feature_array = [features[name] for name in FeatureExtractor.get_feature_names()]
+            X_data.append(feature_array)
+
+            # 模拟 7 天后投币量增长
+            base_coins = video.coin_count
+            interaction_rate = features['interaction_rate']
+            growth_factor = 1 + interaction_rate * 3 + np.random.uniform(0, 0.3)
+            simulated_future_coins = int(base_coins * growth_factor)
+            y_data.append(simulated_future_coins)
+
+        X = np.array(X_data)
+        y = np.array(y_data)
+
+        # 分割数据
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=42
+        )
+
+        # 训练 XGBoost 模型
+        model = XGBRegressor(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            objective='reg:squarederror',
+            random_state=42,
+            n_jobs=-1
+        )
+
+        model.fit(X_train, y_train)
+
+        # 评估
+        train_score = model.score(X_train, y_train)
+        test_score = model.score(X_test, y_test)
+
+        # 保存模型
+        model_path = MODEL_DIR / "xgboost_coin_predictor.pkl"
+        with open(model_path, 'wb') as f:
+            pickle.dump(model, f)
+
+        logger.info(f"投币预测模型训练完成，R² 分数: train={train_score:.4f}, test={test_score:.4f}")
+
+        return {
+            "success": True,
+            "model_type": "XGBoost Coin Regressor",
+            "train_samples": len(X_train),
+            "test_samples": len(X_test),
+            "train_r2": round(train_score, 4),
+            "test_r2": round(test_score, 4),
+            "feature_count": len(FeatureExtractor.get_feature_names()),
+            "feature_names": FeatureExtractor.get_feature_names(),
+            "model_path": str(model_path),
+            "trained_at": datetime.now().isoformat()
+        }
 
     def get_model_status(self) -> Dict:
         """获取模型状态"""

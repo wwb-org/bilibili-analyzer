@@ -6,9 +6,10 @@
 - KeywordStatsETL: 热词聚合统计ETL（DWS层）
 """
 import json
+import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from sqlalchemy import func, and_
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import Session
@@ -17,6 +18,26 @@ from app.etl.base import ETLTask
 from app.models.models import Video, Comment, Danmaku
 from app.models.warehouse import DwdKeywordDaily, DwsKeywordStats
 from app.services.nlp import NLPAnalyzer
+
+logger = logging.getLogger(__name__)
+
+UPSERT_CHUNK_SIZE = 1000
+MAX_DWD_WORD_LENGTH = DwdKeywordDaily.__table__.c.word.type.length or 50
+MAX_DWS_WORD_LENGTH = DwsKeywordStats.__table__.c.word.type.length or 50
+
+
+def _chunk_rows(rows: List[Dict[str, Any]], chunk_size: int = UPSERT_CHUNK_SIZE):
+    for i in range(0, len(rows), chunk_size):
+        yield rows[i:i + chunk_size]
+
+
+def _normalize_word(word: Any, max_len: int) -> Optional[str]:
+    text = str(word or "").strip()
+    if not text:
+        return None
+    if len(text) > max_len:
+        return None
+    return text
 
 
 class KeywordDailyETL(ETLTask):
@@ -147,36 +168,47 @@ class KeywordDailyETL(ETLTask):
     ) -> List[Dict]:
         """从评论提取热词"""
         # 按分区分组
-        category_comments = defaultdict(list)
-        category_sentiments = defaultdict(list)
+        category_comment_items = defaultdict(list)
         category_bvids = defaultdict(set)
 
         for comment in comments:
             category = video_category_map.get(comment.video_id, "未分类")
             if comment.content:
-                category_comments[category].append(comment.content)
-                if comment.sentiment_score is not None:
-                    category_sentiments[category].append(comment.sentiment_score)
+                category_comment_items[category].append({
+                    "content": comment.content,
+                    "sentiment": comment.sentiment_score
+                })
                 bvid = video_bvid_map.get(comment.video_id)
                 if bvid:
                     category_bvids[category].add(bvid)
 
         result = []
-        for category, contents in category_comments.items():
+        for category, items in category_comment_items.items():
+            contents = [item["content"] for item in items]
             keywords = self.nlp.extract_keywords_tfidf(contents, self.top_k)
-            sentiments = category_sentiments.get(category, [])
-            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else None
-            bvids = list(category_bvids.get(category, set()))[:5]
+            video_count = len(category_bvids.get(category, set()))
+            sample_bvids = list(category_bvids.get(category, set()))[:5]
 
             for word, frequency in keywords:
+                # 词级情感分：仅统计包含该词的评论
+                word_sentiments = [
+                    item["sentiment"]
+                    for item in items
+                    if item["sentiment"] is not None and word in item["content"]
+                ]
+                avg_sentiment = (
+                    sum(word_sentiments) / len(word_sentiments)
+                    if word_sentiments else None
+                )
+
                 result.append({
                     "word": word,
                     "source": "comment",
                     "category": category,
                     "frequency": frequency,
-                    "video_count": len(bvids),
+                    "video_count": video_count,
                     "avg_sentiment": avg_sentiment,
-                    "sample_bvids": bvids
+                    "sample_bvids": sample_bvids
                 })
 
         return result
@@ -203,7 +235,8 @@ class KeywordDailyETL(ETLTask):
         result = []
         for category, contents in category_danmakus.items():
             keywords = self.nlp.extract_keywords_tfidf(contents, self.top_k)
-            bvids = list(category_bvids.get(category, set()))[:5]
+            video_count = len(category_bvids.get(category, set()))
+            sample_bvids = list(category_bvids.get(category, set()))[:5]
 
             for word, frequency in keywords:
                 result.append({
@@ -211,9 +244,9 @@ class KeywordDailyETL(ETLTask):
                     "source": "danmaku",
                     "category": category,
                     "frequency": frequency,
-                    "video_count": len(bvids),
+                    "video_count": video_count,
                     "avg_sentiment": None,
-                    "sample_bvids": bvids
+                    "sample_bvids": sample_bvids
                 })
 
         return result
@@ -227,8 +260,13 @@ class KeywordDailyETL(ETLTask):
 
         # 去重合并，避免同一 (word, source, category) 重复写入导致唯一键冲突
         merged: Dict[tuple, Dict[str, Any]] = {}
+        skipped_invalid_words = 0
         for item in data:
-            key = (item["word"], item["source"], item["category"])
+            normalized_word = _normalize_word(item.get("word"), MAX_DWD_WORD_LENGTH)
+            if normalized_word is None:
+                skipped_invalid_words += 1
+                continue
+            key = (normalized_word, item["source"], item["category"])
             if key not in merged:
                 merged[key] = {
                     "frequency": item["frequency"],
@@ -268,15 +306,23 @@ class KeywordDailyETL(ETLTask):
                 "created_at": now,
             })
 
-        stmt = mysql_insert(DwdKeywordDaily.__table__).values(rows)
-        stmt = stmt.on_duplicate_key_update(
-            frequency=stmt.inserted.frequency,
-            video_count=stmt.inserted.video_count,
-            avg_sentiment=stmt.inserted.avg_sentiment,
-            sample_bvids=stmt.inserted.sample_bvids,
-            created_at=stmt.inserted.created_at,
-        )
-        self.db.execute(stmt)
+        if skipped_invalid_words > 0:
+            logger.warning(
+                "[KeywordDailyETL] 过滤超长/空热词 %s 个（最大长度=%s）",
+                skipped_invalid_words,
+                MAX_DWD_WORD_LENGTH,
+            )
+
+        for chunk in _chunk_rows(rows):
+            stmt = mysql_insert(DwdKeywordDaily.__table__).values(chunk)
+            stmt = stmt.on_duplicate_key_update(
+                frequency=stmt.inserted.frequency,
+                video_count=stmt.inserted.video_count,
+                avg_sentiment=stmt.inserted.avg_sentiment,
+                sample_bvids=stmt.inserted.sample_bvids,
+                created_at=stmt.inserted.created_at,
+            )
+            self.db.execute(stmt)
 
         return len(rows)
 
@@ -408,19 +454,24 @@ class KeywordStatsETL(ETLTask):
 
         rows = []
         now = datetime.utcnow()
+        skipped_invalid_words = 0
         for i, item in enumerate(data):
+            normalized_word = _normalize_word(item.get("word"), MAX_DWS_WORD_LENGTH)
+            if normalized_word is None:
+                skipped_invalid_words += 1
+                continue
             current_rank = i + 1
-            prev_rank = prev_rankings.get(item["word"], current_rank)
+            prev_rank = prev_rankings.get(normalized_word, current_rank)
             rank_change = prev_rank - current_rank  # 正数表示上升
 
             # 计算频次趋势
-            prev_freq = week_ago_stats.get(item["word"], 0)
+            prev_freq = week_ago_stats.get(normalized_word, 0)
             frequency_trend = 0
             if prev_freq > 0:
                 frequency_trend = (item["total_frequency"] - prev_freq) / prev_freq
             rows.append({
                 "stat_date": stat_date,
-                "word": item["word"],
+                "word": normalized_word,
                 "title_frequency": item["title_frequency"],
                 "comment_frequency": item["comment_frequency"],
                 "danmaku_frequency": item["danmaku_frequency"],
@@ -436,21 +487,29 @@ class KeywordStatsETL(ETLTask):
                 "created_at": now,
             })
 
-        stmt = mysql_insert(DwsKeywordStats.__table__).values(rows)
-        stmt = stmt.on_duplicate_key_update(
-            title_frequency=stmt.inserted.title_frequency,
-            comment_frequency=stmt.inserted.comment_frequency,
-            danmaku_frequency=stmt.inserted.danmaku_frequency,
-            total_frequency=stmt.inserted.total_frequency,
-            video_count=stmt.inserted.video_count,
-            category_distribution=stmt.inserted.category_distribution,
-            avg_sentiment=stmt.inserted.avg_sentiment,
-            frequency_trend=stmt.inserted.frequency_trend,
-            rank_change=stmt.inserted.rank_change,
-            heat_score=stmt.inserted.heat_score,
-            created_at=stmt.inserted.created_at,
-        )
-        self.db.execute(stmt)
+        if skipped_invalid_words > 0:
+            logger.warning(
+                "[KeywordStatsETL] 过滤超长/空热词 %s 个（最大长度=%s）",
+                skipped_invalid_words,
+                MAX_DWS_WORD_LENGTH,
+            )
+
+        for chunk in _chunk_rows(rows):
+            stmt = mysql_insert(DwsKeywordStats.__table__).values(chunk)
+            stmt = stmt.on_duplicate_key_update(
+                title_frequency=stmt.inserted.title_frequency,
+                comment_frequency=stmt.inserted.comment_frequency,
+                danmaku_frequency=stmt.inserted.danmaku_frequency,
+                total_frequency=stmt.inserted.total_frequency,
+                video_count=stmt.inserted.video_count,
+                category_distribution=stmt.inserted.category_distribution,
+                avg_sentiment=stmt.inserted.avg_sentiment,
+                frequency_trend=stmt.inserted.frequency_trend,
+                rank_change=stmt.inserted.rank_change,
+                heat_score=stmt.inserted.heat_score,
+                created_at=stmt.inserted.created_at,
+            )
+            self.db.execute(stmt)
 
         return len(rows)
 

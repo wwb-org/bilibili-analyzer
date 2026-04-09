@@ -5,7 +5,7 @@
       <el-aside width="240px" class="sidebar">
         <div class="logo-container">
           <img src="@/bilibili.svg" alt="Logo" class="logo-icon" />
-          <span class="logo-text">趋势分析系统</span>
+          <span class="logo-text">B站视频分析系统</span>
         </div>
         
         <el-menu
@@ -43,6 +43,11 @@
             <el-icon><TrendCharts /></el-icon>
             <span>智能预测</span>
           </el-menu-item>
+
+          <el-menu-item index="/content-planner">
+            <el-icon><Promotion /></el-icon>
+            <span>内容策划</span>
+          </el-menu-item>
           
           <el-menu-item index="/admin" v-if="userStore.user?.role === 'admin'">
             <el-icon><Setting /></el-icon>
@@ -60,7 +65,13 @@
           <div class="header-right">
             <el-dropdown @command="handleCommand">
               <div class="user-info">
-                <el-avatar :size="32" class="user-avatar">{{ userAvatar }}</el-avatar>
+                <img
+                  v-if="userAvatarUrl"
+                  :src="userAvatarUrl"
+                  class="user-avatar-img"
+                  referrerpolicy="no-referrer"
+                />
+                <el-avatar v-else :size="32" class="user-avatar">{{ userAvatar }}</el-avatar>
                 <span class="user-name">{{ userStore.user?.username || '用户' }}</span>
                 <el-icon><CaretBottom /></el-icon>
               </div>
@@ -90,9 +101,9 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { 
-  DataLine, VideoPlay, ChatDotRound, PriceTag, 
-  Microphone, TrendCharts, Setting, CaretBottom 
+import {
+  DataLine, VideoPlay, ChatDotRound, PriceTag,
+  Microphone, TrendCharts, Setting, CaretBottom, Promotion
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -101,6 +112,12 @@ const userStore = useUserStore()
 
 const activeMenu = computed(() => route.path)
 const userAvatar = computed(() => (userStore.user?.username?.[0] || 'U').toUpperCase())
+const userAvatarUrl = computed(() => {
+  const u = userStore.user
+  if (u?.avatar) return `/uploads/${u.avatar}`
+  if (u?.bilibili_avatar) return u.bilibili_avatar
+  return ''
+})
 
 const handleCommand = (command) => {
   if (command === 'logout') {
@@ -208,6 +225,14 @@ const handleCommand = (command) => {
   background-color: var(--bili-blue);
   color: #fff;
   font-size: 14px;
+  margin-right: 8px;
+}
+
+.user-avatar-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
   margin-right: 8px;
 }
 

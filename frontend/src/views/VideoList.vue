@@ -138,7 +138,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Calendar, Download } from '@element-plus/icons-vue'
 import VideoCard from '@/components/video/VideoCard.vue'
@@ -146,6 +146,9 @@ import VideoDetailDialog from '@/components/video/VideoDetailDialog.vue'
 import VideoStatsPanel from '@/components/video/VideoStatsPanel.vue'
 import VideoCompareDialog from '@/components/video/VideoCompareDialog.vue'
 import { getVideos, getVideosStats, getExportUrl, getCategories } from '@/api/videos'
+import { useVideoListStore } from '@/store/videoList'
+
+const videoListStore = useVideoListStore()
 
 const loading = ref(false)
 const videos = ref([])
@@ -362,10 +365,46 @@ const fetchCategories = async () => {
   }
 }
 
+// ========== 缓存存取 ==========
+const saveToStore = () => {
+  videoListStore.keyword = filters.keyword
+  videoListStore.category = filters.category
+  videoListStore.orderBy = filters.order_by
+  videoListStore.dateRange = filters.dateRange
+  videoListStore.videos = videos.value
+  videoListStore.totalVideos = pagination.total
+  videoListStore.currentPage = pagination.page
+  videoListStore.pageSize = pagination.pageSize
+  videoListStore.categoryOptions = categoryOptions.value
+  videoListStore.statsData = statsData.value
+  videoListStore.cachedAt = Date.now()
+}
+
+const restoreFromStore = () => {
+  filters.keyword = videoListStore.keyword
+  filters.category = videoListStore.category
+  filters.order_by = videoListStore.orderBy
+  filters.dateRange = videoListStore.dateRange
+  videos.value = videoListStore.videos
+  pagination.total = videoListStore.totalVideos
+  pagination.page = videoListStore.currentPage
+  pagination.pageSize = videoListStore.pageSize
+  categoryOptions.value = videoListStore.categoryOptions
+  statsData.value = videoListStore.statsData
+}
+
 onMounted(() => {
-  fetchCategories()
-  fetchVideos()
-  fetchStats()
+  if (videoListStore.isFresh && videoListStore.videos.length > 0) {
+    restoreFromStore()
+  } else {
+    fetchCategories()
+    fetchVideos()
+    fetchStats()
+  }
+})
+
+onBeforeUnmount(() => {
+  saveToStore()
 })
 </script>
 

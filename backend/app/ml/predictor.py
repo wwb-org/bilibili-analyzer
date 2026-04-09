@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # 模型文件路径
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MODEL_PATH = BASE_DIR / "ml_models" / "xgboost_predictor.pkl"
+COIN_MODEL_PATH = BASE_DIR / "ml_models" / "xgboost_coin_predictor.pkl"
 
 
 class HotPredictor:
@@ -26,6 +27,7 @@ class HotPredictor:
 
     def __init__(self):
         self.model = None
+        self.coin_model = None
         self.feature_names = FeatureExtractor.get_feature_names()
         self._load_model()
 
@@ -41,6 +43,18 @@ class HotPredictor:
                 self.model = None
         else:
             logger.warning(f"模型文件不存在: {MODEL_PATH}")
+
+        # 加载投币预测模型
+        if COIN_MODEL_PATH.exists():
+            try:
+                with open(COIN_MODEL_PATH, 'rb') as f:
+                    self.coin_model = pickle.load(f)
+                logger.info("投币预测模型加载成功")
+            except Exception as e:
+                logger.error(f"投币模型加载失败: {e}")
+                self.coin_model = None
+        else:
+            logger.warning(f"投币模型文件不存在: {COIN_MODEL_PATH}")
 
     def reload_model(self):
         """重新加载模型"""
@@ -67,7 +81,13 @@ class HotPredictor:
             }
 
         features = FeatureExtractor.extract_features(video)
-        return self._predict(features, video.bvid, video.title)
+        result = self._predict(features, video.bvid, video.title)
+
+        # 用实际投币数覆盖从比率计算出的值
+        if result.get("success") and "current_coin_count" in result:
+            result["current_coin_count"] = video.coin_count or 0
+
+        return result
 
     def predict_by_bvid(self, bvid: str, db: Session) -> Dict:
         """
@@ -137,7 +157,7 @@ class HotPredictor:
             # 热度等级判断
             heat_level = self._calculate_heat_level(growth_rate)
 
-            return {
+            result = {
                 "success": True,
                 "bvid": bvid,
                 "title": title,
@@ -152,12 +172,49 @@ class HotPredictor:
                 "predicted_at": datetime.now().isoformat()
             }
 
+            # 投币量预测
+            coin_prediction = self._predict_coins(X, features)
+            result.update(coin_prediction)
+
+            return result
+
         except Exception as e:
             logger.error(f"预测失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
             }
+
+    def _predict_coins(self, X, features: Dict[str, float]) -> Dict:
+        """
+        预测 7 天后的投币量
+
+        Args:
+            X: 特征数组（已构建好的）
+            features: 特征字典
+
+        Returns:
+            投币预测结果字典
+        """
+        if self.coin_model is None:
+            return {}
+
+        try:
+            predicted_coins = float(self.coin_model.predict(X)[0])
+            current_coins = int(features.get('coin_rate', 0) * features.get('current_play_count', 1))
+            predicted_coins = int(max(predicted_coins, 0))
+            coin_increment = predicted_coins - current_coins
+            coin_growth_rate = (coin_increment / max(current_coins, 1)) * 100
+
+            return {
+                "current_coin_count": current_coins,
+                "predicted_coin_count": predicted_coins,
+                "coin_increment": coin_increment,
+                "coin_growth_rate": round(coin_growth_rate, 2),
+            }
+        except Exception as e:
+            logger.error(f"投币预测失败: {e}")
+            return {}
 
     def _get_feature_importance(self) -> Dict[str, float]:
         """获取特征重要性"""
@@ -206,7 +263,8 @@ class HotPredictor:
             "feature_count": len(self.feature_names),
             "feature_names": self.feature_names,
             "model_path": str(MODEL_PATH),
-            "feature_importance": self._get_feature_importance()
+            "feature_importance": self._get_feature_importance(),
+            "coin_model_loaded": self.coin_model is not None
         }
 
 

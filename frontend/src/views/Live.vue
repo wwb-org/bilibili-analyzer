@@ -7,7 +7,7 @@
           v-model="newRoomId"
           placeholder="输入直播间ID添加监控"
           class="room-input"
-          @keyup.enter="addRoom"
+          @keyup.enter="handleAddRoom"
         >
           <template #prefix>
             <el-icon><Monitor /></el-icon>
@@ -16,7 +16,7 @@
         <el-button
           type="primary"
           class="action-btn"
-          @click="addRoom"
+          @click="handleAddRoom"
           :disabled="rooms.length >= 4"
         >
           添加房间
@@ -40,6 +40,51 @@
       </div>
     </div>
 
+    <!-- 热门直播间 -->
+    <div class="popular-panel">
+      <div class="popular-header" @click="popularExpanded = !popularExpanded">
+        <h3 class="panel-title">
+          <el-icon><Promotion /></el-icon>
+          热门直播间
+        </h3>
+        <div class="popular-actions">
+          <el-button size="small" text @click.stop="loadPopularRooms" :loading="popularLoading">
+            <el-icon><Refresh /></el-icon>
+          </el-button>
+          <el-icon class="expand-arrow" :class="{ 'is-expanded': popularExpanded }">
+            <ArrowDown />
+          </el-icon>
+        </div>
+      </div>
+      <div v-show="popularExpanded" class="popular-body">
+        <div v-if="popularLoading && popularRooms.length === 0" class="popular-loading">
+          加载中...
+        </div>
+        <div v-else-if="popularRooms.length === 0" class="popular-empty">
+          暂无数据
+        </div>
+        <div v-else class="popular-grid">
+          <div
+            v-for="room in popularRooms"
+            :key="room.room_id"
+            class="popular-room-card"
+            @click="quickAddRoom(room.room_id)"
+          >
+            <img :src="room.face" class="room-avatar" />
+            <div class="room-info">
+              <div class="room-title-text">{{ room.title }}</div>
+              <div class="room-meta">
+                <span class="room-uname">{{ room.uname }}</span>
+                <span class="room-online">{{ formatOnline(room.online) }}在线</span>
+              </div>
+              <div class="room-area" v-if="room.area_name">{{ room.area_name }}</div>
+            </div>
+            <div class="room-id-badge">{{ room.room_id }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 房间标签页 -->
     <div class="room-tabs" v-if="rooms.length > 0">
       <div
@@ -49,9 +94,22 @@
         :class="{ 'is-active': activeRoom === room.id }"
         @click="switchRoom(room.id)"
       >
+        <span class="room-status-dot" :class="room.connected ? 'online' : room.paused ? 'paused' : 'offline'" />
         <span class="room-name">房间 {{ room.id }}</span>
         <span class="room-danmaku-count">{{ room.stats.total_danmaku }} 弹幕</span>
-        <el-icon class="close-icon" @click.stop="removeRoom(room.id)"><Close /></el-icon>
+
+        <!-- 暂停/继续按钮 -->
+        <el-icon v-if="room.connected" class="action-icon" @click.stop="pauseRoom(room.id)" title="暂停">
+          <VideoPause />
+        </el-icon>
+        <el-icon v-else-if="room.paused" class="action-icon resume" @click.stop="resumeRoom(room.id)" title="继续">
+          <VideoPlay />
+        </el-icon>
+        <el-icon v-else class="action-icon" @click.stop="resumeRoom(room.id)" title="重连">
+          <RefreshRight />
+        </el-icon>
+
+        <el-icon class="close-icon" @click.stop="handleRemoveRoom(room.id)"><Close /></el-icon>
       </div>
       <div class="room-tab global-tab" :class="{ 'is-active': activeRoom === 'global' }" @click="switchRoom('global')">
         <el-icon><DataAnalysis /></el-icon>
@@ -109,6 +167,13 @@
 
     <!-- 单房间详情视图 -->
     <div v-else-if="currentRoom" class="room-detail-view">
+      <!-- 暂停提示 -->
+      <div v-if="currentRoom.paused" class="paused-banner">
+        <el-icon><VideoPause /></el-icon>
+        <span>当前房间已暂停接收数据</span>
+        <el-button type="primary" size="small" @click="resumeRoom(currentRoom.id)">恢复连接</el-button>
+      </div>
+
       <!-- 统计卡片区 -->
       <div class="stats-grid">
         <div class="stat-card">
@@ -184,25 +249,31 @@
 
         <!-- 右侧：可视化图表区 -->
         <div class="content-col right-col">
-          <div class="chart-panel">
+          <div class="chart-section">
             <div class="panel-header small">
               <h3 class="panel-title">情感分布</h3>
             </div>
-            <div ref="pieChartRef" class="chart-container"></div>
+            <div class="chart-panel">
+              <div ref="pieChartRef" class="chart-container"></div>
+            </div>
           </div>
 
-          <div class="chart-panel">
+          <div class="chart-section">
             <div class="panel-header small">
               <h3 class="panel-title">情感趋势</h3>
             </div>
-            <div ref="lineChartRef" class="chart-container"></div>
+            <div class="chart-panel">
+              <div ref="lineChartRef" class="chart-container"></div>
+            </div>
           </div>
 
-          <div class="chart-panel">
+          <div class="chart-section">
             <div class="panel-header small">
               <h3 class="panel-title">实时热词</h3>
             </div>
-            <div ref="wordcloudRef" class="chart-container"></div>
+            <div class="chart-panel">
+              <div ref="wordcloudRef" class="chart-container"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -220,27 +291,30 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Monitor, ChatLineRound, Timer, Sunny, Present, Close, DataAnalysis
+  Monitor, ChatLineRound, Timer, Sunny, Present, Close, DataAnalysis,
+  Promotion, Refresh, ArrowDown, VideoPause, VideoPlay, RefreshRight
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import 'echarts-wordcloud'
-import LiveWebSocket from '@/utils/websocket'
-import { getServicesStatus } from '@/api/live'
+import { getServicesStatus, getPopularRooms } from '@/api/live'
+import {
+  rooms, activeRoom, popularRooms,
+  addRoom, removeRoom, pauseRoom, resumeRoom
+} from '@/services/liveManager'
 
-// ========== 状态管理 ==========
+// ========== 本地 UI 状态 ==========
 const newRoomId = ref('')
-const activeRoom = ref('global')
 const kafkaStatus = ref(false)
 const bilibiliLoggedIn = ref(false)
 
-// 房间数据结构
-const rooms = ref([])
-// WebSocket 实例映射
-const wsMap = {}
-// ECharts 实例映射
+// 热门直播间（UI 状态）
+const popularExpanded = ref(true)
+const popularLoading = ref(false)
+
+// ECharts 实例映射（组件本地，mount 时创建，unmount 时销毁）
 const chartInstances = {}
 
 // DOM 引用
@@ -262,8 +336,8 @@ const sortedRooms = computed(() => {
   return [...rooms.value].sort((a, b) => b.stats.total_danmaku - a.stats.total_danmaku)
 })
 
-// ========== 房间管理 ==========
-const addRoom = async () => {
+// ========== 房间操作（本地包装） ==========
+const handleAddRoom = async () => {
   if (!newRoomId.value) {
     ElMessage.warning('请输入直播间ID')
     return
@@ -275,149 +349,47 @@ const addRoom = async () => {
   }
 
   const roomId = parseInt(newRoomId.value)
-
-  if (rooms.value.find(r => r.id === roomId)) {
-    ElMessage.warning('该房间已在监控中')
-    return
-  }
-
-  if (rooms.value.length >= 4) {
-    ElMessage.warning('最多同时监控4个房间')
-    return
-  }
-
-  // 创建房间数据
-  const room = reactive({
-    id: roomId,
-    connected: false,
-    stats: {
-      total_danmaku: 0,
-      total_gift: 0,
-      danmaku_rate: 0,
-      avg_sentiment: 0.5,
-      sentiment_dist: { positive: 0, neutral: 0, negative: 0 }
-    },
-    danmakuList: [],
-    wordcloudData: [],
-    sentimentTrend: []
-  })
-
-  rooms.value.push(room)
   newRoomId.value = ''
 
-  // 连接 WebSocket
-  await connectRoom(room)
-
-  // 切换到该房间
-  activeRoom.value = roomId
-
-  // 初始化图表
-  await nextTick()
-  initRoomCharts()
+  const { success } = await addRoom(roomId)
+  if (success) {
+    activeRoom.value = roomId
+  }
 }
 
-const removeRoom = (roomId) => {
-  // 断开 WebSocket
-  if (wsMap[roomId]) {
-    wsMap[roomId].disconnect()
-    delete wsMap[roomId]
-  }
+const quickAddRoom = (roomId) => {
+  newRoomId.value = String(roomId)
+  handleAddRoom()
+}
 
-  // 销毁图表
+const handleRemoveRoom = (roomId) => {
+  // 销毁当前房间的图表（如果正在查看）
   if (activeRoom.value === roomId) {
     destroyRoomCharts()
   }
-
-  // 移除房间
-  const index = rooms.value.findIndex(r => r.id === roomId)
-  if (index > -1) {
-    rooms.value.splice(index, 1)
-  }
-
-  // 切换视图
-  if (activeRoom.value === roomId) {
-    activeRoom.value = rooms.value.length > 0 ? rooms.value[0].id : 'global'
-  }
-
-  ElMessage.info(`已移除房间 ${roomId}`)
+  removeRoom(roomId)
 }
 
 const switchRoom = (roomId) => {
   activeRoom.value = roomId
+}
 
-  if (roomId !== 'global') {
-    destroyGlobalCharts()
-    nextTick(() => {
-      initRoomCharts()
-      updateRoomCharts()
-      updateWordcloud()
-    })
-  } else {
-    nextTick(() => {
-      initGlobalCharts()
-      updateGlobalCharts()
-    })
+// ========== 热门直播间 ==========
+const loadPopularRooms = async () => {
+  popularLoading.value = true
+  try {
+    const res = await getPopularRooms()
+    popularRooms.value = res.rooms || []
+  } catch {
+    popularRooms.value = []
+  } finally {
+    popularLoading.value = false
   }
 }
 
-// ========== WebSocket 连接 ==========
-const connectRoom = async (room) => {
-  try {
-    const ws = new LiveWebSocket(room.id)
-
-    ws.on('status', (data) => {
-      room.connected = data.status === 'connected'
-    })
-
-    ws.on('danmaku', (data) => {
-      room.danmakuList.unshift(data)
-      if (room.danmakuList.length > 100) {
-        room.danmakuList.pop()
-      }
-    })
-
-    ws.on('gift', () => {
-      // 礼物统计在 stats 中更新
-    })
-
-    ws.on('stats', (data) => {
-      Object.assign(room.stats, data)
-
-      // 更新趋势数据
-      room.sentimentTrend.push({
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        avg: data.avg_sentiment,
-        ...data.sentiment_dist
-      })
-      if (room.sentimentTrend.length > 30) {
-        room.sentimentTrend.shift()
-      }
-
-      // 更新图表
-      if (activeRoom.value === room.id) {
-        updateRoomCharts()
-      }
-      if (activeRoom.value === 'global') {
-        updateGlobalCharts()
-      }
-    })
-
-    ws.on('wordcloud', (data) => {
-      room.wordcloudData = data
-      if (activeRoom.value === room.id) {
-        updateWordcloud()
-      }
-    })
-
-    await ws.connect()
-    wsMap[room.id] = ws
-    room.connected = true
-
-    ElMessage.success(`房间 ${room.id} 连接成功`)
-  } catch (error) {
-    ElMessage.error(`房间 ${room.id} 连接失败`)
-    room.connected = false
-  }
+const formatOnline = (num) => {
+  if (num >= 10000) return (num / 10000).toFixed(1) + '万'
+  return String(num)
 }
 
 // ========== ECharts 图表 ==========
@@ -513,14 +485,12 @@ const destroyGlobalCharts = () => {
 
 // 全局图表
 const initGlobalCharts = () => {
-  // 多房间对比折线图
   if (compareChartRef.value && !chartInstances['compare']) {
     const compareChart = echarts.init(compareChartRef.value)
     compareChart.setOption(getCompareChartOption())
     chartInstances['compare'] = compareChart
   }
 
-  // 全局词云
   if (globalWordcloudRef.value && !chartInstances['globalWordcloud']) {
     const globalWordcloud = echarts.init(globalWordcloudRef.value)
     globalWordcloud.setOption(getWordcloudOption())
@@ -669,18 +639,30 @@ const checkServicesStatus = async () => {
 }
 
 // ========== 生命周期 ==========
-onMounted(() => {
+onMounted(async () => {
   checkServicesStatus()
   window.addEventListener('resize', handleResize)
+
+  // 如果没有房间且热门列表为空，加载热门直播间
+  if (rooms.value.length === 0 && popularRooms.value.length === 0) {
+    loadPopularRooms()
+  }
+
+  // 初始化当前视图的图表
+  await nextTick()
+  if (activeRoom.value === 'global' && rooms.value.length > 0) {
+    initGlobalCharts()
+    updateGlobalCharts()
+  } else if (currentRoom.value) {
+    initRoomCharts()
+    updateRoomCharts()
+    updateWordcloud()
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
-
-  // 断开所有 WebSocket
-  Object.values(wsMap).forEach(ws => ws.disconnect())
-
-  // 销毁所有图表
+  // 仅销毁图表，不断开 WebSocket（liveManager 持久管理）
   Object.values(chartInstances).forEach(chart => chart.dispose())
 })
 
@@ -688,10 +670,12 @@ const handleResize = () => {
   Object.values(chartInstances).forEach(chart => chart.resize())
 }
 
-// 监听 activeRoom 变化
-watch(activeRoom, (newVal) => {
+// ========== watch：数据变化时更新图表 ==========
+
+// 监听 activeRoom 变化 → 切换图表
+watch(activeRoom, () => {
   nextTick(() => {
-    if (newVal === 'global') {
+    if (activeRoom.value === 'global') {
       destroyRoomCharts()
       initGlobalCharts()
       updateGlobalCharts()
@@ -703,6 +687,58 @@ watch(activeRoom, (newVal) => {
     }
   })
 })
+
+// 监听当前房间 stats 变化 → 更新单房间图表
+watch(
+  () => currentRoom.value?.stats,
+  () => {
+    if (activeRoom.value !== 'global' && currentRoom.value) {
+      updateRoomCharts()
+    }
+  },
+  { deep: true }
+)
+
+// 监听当前房间 sentimentTrend 长度变化 → 更新折线图
+watch(
+  () => currentRoom.value?.sentimentTrend?.length,
+  () => {
+    if (activeRoom.value !== 'global' && currentRoom.value) {
+      updateRoomCharts()
+    }
+  }
+)
+
+// 监听当前房间 wordcloudData 变化 → 更新词云
+watch(
+  () => currentRoom.value?.wordcloudData,
+  () => {
+    if (activeRoom.value !== 'global' && currentRoom.value) {
+      updateWordcloud()
+    }
+  }
+)
+
+// 全局视图：监听所有房间的数据变化
+watch(
+  () => rooms.value.map(r => r.sentimentTrend.length),
+  () => {
+    if (activeRoom.value === 'global') {
+      updateGlobalCharts()
+    }
+  },
+  { deep: true }
+)
+
+watch(
+  () => rooms.value.map(r => r.wordcloudData),
+  () => {
+    if (activeRoom.value === 'global') {
+      updateGlobalCharts()
+    }
+  },
+  { deep: true }
+)
 </script>
 
 <style scoped>
@@ -791,6 +827,54 @@ watch(activeRoom, (newVal) => {
   opacity: 0.8;
 }
 
+/* 状态指示灯 */
+.room-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.room-status-dot.online {
+  background: #00B578;
+  box-shadow: 0 0 6px rgba(0, 181, 120, 0.6);
+  animation: pulse-green 2s infinite;
+}
+
+.room-status-dot.paused {
+  background: #E6A23C;
+}
+
+.room-status-dot.offline {
+  background: #909399;
+}
+
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 暂停/继续按钮 */
+.action-icon {
+  font-size: 14px;
+  opacity: 0.6;
+  transition: opacity 0.2s, color 0.2s;
+  cursor: pointer;
+}
+
+.action-icon:hover {
+  opacity: 1;
+}
+
+.action-icon.resume {
+  color: #00B578;
+  opacity: 0.8;
+}
+
+.room-tab.is-active .action-icon.resume {
+  color: white;
+}
+
 .close-icon {
   font-size: 14px;
   opacity: 0.6;
@@ -802,13 +886,31 @@ watch(activeRoom, (newVal) => {
 }
 
 .global-tab {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--bili-pink);
   color: white;
   border: none;
 }
 
+.global-tab:hover {
+  background: #f2618a;
+}
+
 .global-tab.is-active {
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  background: var(--bili-pink);
+}
+
+/* 暂停提示横幅 */
+.paused-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #FDF6EC;
+  border: 1px solid #E6A23C;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  color: #E6A23C;
+  font-size: 14px;
 }
 
 /* 全局视图 */
@@ -842,17 +944,17 @@ watch(activeRoom, (newVal) => {
 }
 
 .ranking-card.rank-1 {
-  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  background: #FFD700;
   color: white;
 }
 
 .ranking-card.rank-2 {
-  background: linear-gradient(135deg, #C0C0C0 0%, #A8A8A8 100%);
+  background: #C0C0C0;
   color: white;
 }
 
 .ranking-card.rank-3 {
-  background: linear-gradient(135deg, #CD7F32 0%, #B8860B 100%);
+  background: #CD7F32;
   color: white;
 }
 
@@ -909,7 +1011,7 @@ watch(activeRoom, (newVal) => {
   height: 250px;
 }
 
-/* 单房间视图 - 复用原有样式 */
+/* 单房间视图 */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -975,7 +1077,15 @@ watch(activeRoom, (newVal) => {
 .content-col {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+}
+
+.left-col {
+  min-width: 0;
+}
+
+.right-col {
+  min-width: 0;
+  gap: 20px;
 }
 
 .panel-header {
@@ -986,7 +1096,7 @@ watch(activeRoom, (newVal) => {
 }
 
 .panel-header.small {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .panel-title {
@@ -1009,14 +1119,34 @@ watch(activeRoom, (newVal) => {
   background: var(--bg-white);
   border-radius: 12px;
   border: 1px solid var(--border-light);
-  height: 520px;
+  height: 600px;
   padding: 16px;
+  display: flex;
+  flex-direction: column;
 }
 
 .danmaku-stream {
-  height: 100%;
+  flex: 1;
   overflow-y: auto;
-  padding-right: 8px;
+  padding-right: 4px;
+}
+
+.danmaku-stream::-webkit-scrollbar {
+  width: 6px;
+}
+
+.danmaku-stream::-webkit-scrollbar-track {
+  background: var(--bg-gray-light);
+  border-radius: 3px;
+}
+
+.danmaku-stream::-webkit-scrollbar-thumb {
+  background: #C0C4CC;
+  border-radius: 3px;
+}
+
+.danmaku-stream::-webkit-scrollbar-thumb:hover {
+  background: #909399;
 }
 
 .danmaku-item {
@@ -1055,20 +1185,153 @@ watch(activeRoom, (newVal) => {
   line-height: 1.5;
 }
 
+.chart-section {
+  display: flex;
+  flex-direction: column;
+}
+
 .chart-panel {
   background: var(--bg-white);
   border-radius: 12px;
   padding: 16px;
   border: 1px solid var(--border-light);
-  height: 200px;
-  display: flex;
-  flex-direction: column;
+  height: 175px;
 }
 
 .chart-container {
-  flex: 1;
   width: 100%;
-  min-height: 0;
+  height: 100%;
+}
+
+/* 热门直播间面板 */
+.popular-panel {
+  background: var(--bg-white);
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.popular-header {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.popular-header:hover {
+  background: var(--bg-gray-light);
+}
+
+.popular-header .panel-title {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.popular-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.expand-arrow {
+  transition: transform 0.2s;
+}
+
+.expand-arrow.is-expanded {
+  transform: rotate(180deg);
+}
+
+.popular-body {
+  padding: 0 20px 16px;
+}
+
+.popular-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.popular-room-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-gray-light);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.popular-room-card:hover {
+  background: var(--bg-gray);
+}
+
+.room-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.room-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.room-title-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.room-uname {
+  color: var(--text-regular);
+}
+
+.room-online {
+  color: var(--bili-blue);
+}
+
+.room-area {
+  font-size: 11px;
+  color: var(--text-placeholder);
+  margin-top: 2px;
+}
+
+.room-id-badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-gray);
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.popular-loading,
+.popular-empty {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .empty-state {

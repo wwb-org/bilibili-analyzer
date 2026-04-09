@@ -102,6 +102,9 @@ const positiveRate = computed(() => {
 // 格式化数字
 const formatNumber = (num) => {
   if (!num) return '0'
+  if (num >= 100000000) {
+    return (num / 100000000).toFixed(2) + '亿'
+  }
   if (num >= 10000) {
     return (num / 10000).toFixed(1) + '万'
   }

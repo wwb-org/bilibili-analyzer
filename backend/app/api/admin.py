@@ -2,19 +2,30 @@
 管理员API
 """
 import re
+import threading
 from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import func, cast, Date
 from pydantic import BaseModel, field_validator
 
 from app.core.database import get_db
 from app.api.auth import get_current_user
-from app.models import User, CrawlLog, UserRole
+from app.models import User, CrawlLog, UserRole, Video, Comment, Danmaku
+from app.models.warehouse import (
+    DwdVideoSnapshot, DwdCommentDaily, DwdKeywordDaily,
+    DwsStatsDaily, DwsCategoryDaily, DwsSentimentDaily,
+    DwsVideoTrend, DwsKeywordStats,
+)
 from app.etl.scheduler import etl_scheduler
 from app.services.crawl_service import CrawlService
 
 router = APIRouter()
+
+# 全局采集停止信号（用于跨线程通知后台采集任务停止）
+_crawl_stop_event = threading.Event()
+_crawl_active = False
 
 
 def require_admin(current_user: User = Depends(get_current_user)):
@@ -90,14 +101,23 @@ def start_crawl(
 
     在后台执行采集任务，立即返回任务启动状态
     """
+    global _crawl_active
+    _crawl_stop_event.clear()
+    _crawl_active = True
+
     def run_crawl_task():
         """后台采集任务"""
-        service = CrawlService()
-        service.crawl_popular_videos(
-            max_videos=request.max_videos,
-            comments_per_video=request.comments_per_video,
-            danmakus_per_video=request.danmakus_per_video
-        )
+        global _crawl_active
+        try:
+            service = CrawlService()
+            service.crawl_popular_videos(
+                max_videos=request.max_videos,
+                comments_per_video=request.comments_per_video,
+                danmakus_per_video=request.danmakus_per_video,
+                stop_event=_crawl_stop_event
+            )
+        finally:
+            _crawl_active = False
 
     background_tasks.add_task(run_crawl_task)
 
@@ -121,7 +141,7 @@ def get_crawl_status(
     latest_log = db.query(CrawlLog).order_by(CrawlLog.started_at.desc()).first()
 
     if not latest_log:
-        return {"status": "no_task", "message": "暂无采集记录"}
+        return {"status": "no_task", "message": "暂无采集记录", "is_active": _crawl_active}
 
     return {
         "id": latest_log.id,
@@ -132,7 +152,8 @@ def get_crawl_status(
         "danmaku_count": latest_log.danmaku_count or 0,
         "started_at": latest_log.started_at.isoformat() if latest_log.started_at else None,
         "finished_at": latest_log.finished_at.isoformat() if latest_log.finished_at else None,
-        "error_msg": latest_log.error_msg
+        "error_msg": latest_log.error_msg,
+        "is_active": _crawl_active
     }
 
 
@@ -145,6 +166,20 @@ def get_crawl_logs(
     """获取采集日志"""
     logs = db.query(CrawlLog).order_by(CrawlLog.started_at.desc()).limit(limit).all()
     return logs
+
+
+@router.post("/crawl/stop")
+def stop_crawl(admin: User = Depends(require_admin)):
+    """
+    停止正在运行的采集任务
+
+    发送停止信号，任务将在处理完当前视频后停止
+    """
+    _crawl_stop_event.set()
+    return {
+        "message": "已发送停止信号，任务将在当前视频处理完成后停止",
+        "is_active": _crawl_active
+    }
 
 
 @router.post("/crawl/batch")
@@ -174,14 +209,22 @@ def start_batch_crawl(
 
     def run_batch_crawl_task():
         """后台批量采集任务"""
-        service = CrawlService()
-        service.crawl_batch_videos(
-            bvids=request.bvids,
-            comments_per_video=request.comments_per_video,
-            danmakus_per_video=request.danmakus_per_video,
-            log_id=task_id
-        )
+        global _crawl_active
+        try:
+            service = CrawlService()
+            service.crawl_batch_videos(
+                bvids=request.bvids,
+                comments_per_video=request.comments_per_video,
+                danmakus_per_video=request.danmakus_per_video,
+                log_id=task_id,
+                stop_event=_crawl_stop_event
+            )
+        finally:
+            _crawl_active = False
 
+    global _crawl_active
+    _crawl_stop_event.clear()
+    _crawl_active = True
     background_tasks.add_task(run_batch_crawl_task)
 
     return {
@@ -194,6 +237,94 @@ def start_batch_crawl(
         },
         "status": "running"
     }
+
+
+class WeeklyCrawlRequest(BaseModel):
+    """每周必看采集请求"""
+    max_episodes: Optional[int] = None  # None = 全部
+    comments_per_video: int = 20
+    danmakus_per_video: int = 0
+
+
+@router.post("/crawl/weekly")
+def start_weekly_crawl(
+    request: WeeklyCrawlRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    采集每周必看历史/最新数据
+
+    max_episodes=None 时采集全部期数（200+ 期）；
+    设置具体数字时只采最新 N 期（如 max_episodes=1 只采本周最新一期）。
+    后台执行，立即返回。
+    """
+    log = CrawlLog(
+        task_name=f'每周必看采集（{"全部" if request.max_episodes is None else f"最新{request.max_episodes}期"}）',
+        status='running',
+        started_at=datetime.utcnow()
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    task_id = log.id
+
+    def run_weekly_task():
+        from app.core.database import SessionLocal as _SL
+        from app.services.crawler import BilibiliCrawler
+        from app.core.config import settings as _s
+        global _crawl_active
+        _db = _SL()
+        try:
+            crawler = BilibiliCrawler(cookie=getattr(_s, 'BILIBILI_COOKIE', '') or '')
+            result = crawler.crawl_weekly_series(
+                max_episodes=request.max_episodes,
+                comments_per_video=request.comments_per_video,
+                danmakus_per_video=request.danmakus_per_video,
+                log_id=task_id,
+                stop_event=_crawl_stop_event,
+            )
+            log_row = _db.query(CrawlLog).filter(CrawlLog.id == task_id).first()
+            if log_row:
+                if result.get('stopped'):
+                    log_row.status = 'stopped'
+                    log_row.error_msg = '用户手动停止'
+                else:
+                    log_row.status = 'success'
+                # videos_saved = 新增，videos_skipped = 已有但更新了数据，两者都算处理过
+                log_row.video_count = result.get('videos_saved', 0) + result.get('videos_skipped', 0)
+                log_row.comment_count = result.get('comments_saved', 0)
+                log_row.danmaku_count = result.get('danmakus_saved', 0)
+                log_row.finished_at = datetime.utcnow()
+                _db.commit()
+        except Exception as e:
+            log_row = _db.query(CrawlLog).filter(CrawlLog.id == task_id).first()
+            if log_row:
+                log_row.status = 'failed'
+                log_row.error_msg = str(e)[:500]
+                log_row.finished_at = datetime.utcnow()
+                _db.commit()
+        finally:
+            _crawl_active = False
+            _db.close()
+
+    global _crawl_active
+    _crawl_stop_event.clear()
+    _crawl_active = True
+    background_tasks.add_task(run_weekly_task)
+
+    label = '全部期数' if request.max_episodes is None else f'最新 {request.max_episodes} 期'
+    return {
+        "message": f"每周必看采集已启动（{label}）",
+        "task_id": task_id,
+        "config": {
+            "max_episodes": request.max_episodes,
+            "comments_per_video": request.comments_per_video,
+        },
+        "status": "running"
+    }
+
 
 
 @router.get("/users")
@@ -374,4 +505,216 @@ def update_bilibili_cookie(
         "message": "Cookie更新成功",
         "username": result.get("username"),
         "uid": result.get("uid")
+    }
+
+
+# ==================== 数据概览接口 ====================
+
+@router.get("/data-overview")
+def get_data_overview(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    数据概览：展示 ODS / DWD / DWS 三层数据的按日期统计
+
+    帮助管理员了解已采集哪些数据、哪些已整理、哪些未处理。
+    """
+    # ---------- ODS 层汇总 ----------
+    total_videos = db.query(func.count(Video.id)).scalar() or 0
+    total_comments = db.query(func.count(Comment.id)).scalar() or 0
+    total_danmakus = db.query(func.count(Danmaku.id)).scalar() or 0
+
+    earliest_date = db.query(func.min(func.date(Video.created_at))).scalar()
+    latest_date = db.query(func.max(func.date(Video.created_at))).scalar()
+
+    # ---------- ODS 按日期统计 ----------
+    video_date_col = func.date(Video.created_at)
+    ods_video_counts = dict(
+        db.query(video_date_col, func.count(Video.id))
+        .group_by(video_date_col).all()
+    )
+    comment_date_col = func.date(Comment.created_at)
+    ods_comment_counts = dict(
+        db.query(comment_date_col, func.count(Comment.id))
+        .group_by(comment_date_col).all()
+    )
+    danmaku_date_col = func.date(Danmaku.created_at)
+    ods_danmaku_counts = dict(
+        db.query(danmaku_date_col, func.count(Danmaku.id))
+        .group_by(danmaku_date_col).all()
+    )
+
+    # ---------- DWD 按日期统计 ----------
+    dwd_snapshot_counts = dict(
+        db.query(
+            DwdVideoSnapshot.snapshot_date,
+            func.count(DwdVideoSnapshot.id)
+        ).group_by(DwdVideoSnapshot.snapshot_date).all()
+    )
+    dwd_comment_counts = dict(
+        db.query(
+            DwdCommentDaily.stat_date,
+            func.count(DwdCommentDaily.id)
+        ).group_by(DwdCommentDaily.stat_date).all()
+    )
+    dwd_keyword_counts = dict(
+        db.query(
+            DwdKeywordDaily.stat_date,
+            func.count(DwdKeywordDaily.id)
+        ).group_by(DwdKeywordDaily.stat_date).all()
+    )
+
+    # ---------- DWS 已有日期集合 ----------
+    dws_stats_dates = {
+        row[0] for row in
+        db.query(DwsStatsDaily.stat_date).all()
+    }
+    dws_category_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsCategoryDaily.stat_date)).all()
+    }
+    dws_sentiment_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsSentimentDaily.stat_date)).all()
+    }
+    dws_video_trend_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsVideoTrend.trend_date)).all()
+    }
+    dws_keyword_stats_dates = {
+        row[0] for row in
+        db.query(func.distinct(DwsKeywordStats.stat_date)).all()
+    }
+
+    # ---------- 合并所有日期 ----------
+    all_dates = set()
+    for d in ods_video_counts:
+        all_dates.add(d)
+    for d in ods_comment_counts:
+        all_dates.add(d)
+    for d in ods_danmaku_counts:
+        all_dates.add(d)
+    for d in dwd_snapshot_counts:
+        all_dates.add(d)
+    for d in dwd_comment_counts:
+        all_dates.add(d)
+    for d in dwd_keyword_counts:
+        all_dates.add(d)
+    all_dates.update(dws_stats_dates)
+    all_dates.update(dws_category_dates)
+    all_dates.update(dws_sentiment_dates)
+    all_dates.update(dws_video_trend_dates)
+    all_dates.update(dws_keyword_stats_dates)
+
+    # ---------- 构建每日明细 ----------
+    daily_details = []
+    for d in sorted(all_dates, reverse=True):
+        ods_v = ods_video_counts.get(d, 0)
+        ods_c = ods_comment_counts.get(d, 0)
+        ods_d = ods_danmaku_counts.get(d, 0)
+
+        dwd_snap = dwd_snapshot_counts.get(d, 0)
+        dwd_comm = dwd_comment_counts.get(d, 0)
+        dwd_kw = dwd_keyword_counts.get(d, 0)
+
+        has_stats = d in dws_stats_dates
+        has_category = d in dws_category_dates
+        has_sentiment = d in dws_sentiment_dates
+        has_trend = d in dws_video_trend_dates
+        has_kw_stats = d in dws_keyword_stats_dates
+
+        # 判断 ETL 状态
+        dwd_done = dwd_snap > 0 or dwd_comm > 0 or dwd_kw > 0
+        # dws_video_trend 依赖多日快照，可能在早期日期为空，按“可选项”处理
+        dws_done = has_stats and has_category and has_sentiment and has_kw_stats
+        if dwd_done and dws_done:
+            etl_status = "complete"
+        elif dwd_done or has_stats or has_category or has_sentiment or has_kw_stats:
+            etl_status = "partial"
+        else:
+            etl_status = "missing"
+
+        daily_details.append({
+            "date": str(d),
+            "ods_videos": ods_v,
+            "ods_comments": ods_c,
+            "ods_danmakus": ods_d,
+            "dwd_video_snapshot": dwd_snap,
+            "dwd_comment_daily": dwd_comm,
+            "dwd_keyword_daily": dwd_kw,
+            "dws_stats": has_stats,
+            "dws_category": has_category,
+            "dws_sentiment": has_sentiment,
+            "dws_video_trend": has_trend,
+            "dws_keyword_stats": has_kw_stats,
+            "etl_status": etl_status,
+        })
+
+    return {
+        "ods": {
+            "videos": total_videos,
+            "comments": total_comments,
+            "danmakus": total_danmakus,
+            "earliest_date": str(earliest_date) if earliest_date else None,
+            "latest_date": str(latest_date) if latest_date else None,
+        },
+        "daily_details": daily_details,
+    }
+
+
+@router.post("/fix-categories")
+def fix_categories(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """
+    批量修复已有视频的分区：将子分区映射为主分区
+
+    同时更新 videos 表和数仓 DWD/DWS 表中的 category 字段
+    """
+    from app.services.crawler import BilibiliCrawler
+
+    mapping = BilibiliCrawler.SUBCATEGORY_MAP
+    updated = 0
+
+    # 更新 videos 表
+    for sub, main in mapping.items():
+        count = db.query(Video).filter(Video.category == sub).update(
+            {Video.category: main}, synchronize_session=False
+        )
+        updated += count
+
+    # 更新 DWD 快照表
+    dwd_snap_updated = 0
+    for sub, main in mapping.items():
+        count = db.query(DwdVideoSnapshot).filter(
+            DwdVideoSnapshot.category == sub
+        ).update({DwdVideoSnapshot.category: main}, synchronize_session=False)
+        dwd_snap_updated += count
+
+    # 更新 DWD 评论表
+    dwd_comment_updated = 0
+    for sub, main in mapping.items():
+        count = db.query(DwdCommentDaily).filter(
+            DwdCommentDaily.category == sub
+        ).update({DwdCommentDaily.category: main}, synchronize_session=False)
+        dwd_comment_updated += count
+
+    # 更新 DWS 分区统计表
+    dws_cat_updated = 0
+    for sub, main in mapping.items():
+        count = db.query(DwsCategoryDaily).filter(
+            DwsCategoryDaily.category == sub
+        ).update({DwsCategoryDaily.category: main}, synchronize_session=False)
+        dws_cat_updated += count
+
+    db.commit()
+
+    return {
+        "message": "分区映射修复完成",
+        "videos_updated": updated,
+        "dwd_snapshot_updated": dwd_snap_updated,
+        "dwd_comment_updated": dwd_comment_updated,
+        "dws_category_updated": dws_cat_updated,
     }

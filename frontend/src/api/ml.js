@@ -64,6 +64,13 @@ export const trainPredictor = () => {
 }
 
 /**
+ * 训练投币预测模型（管理员）
+ */
+export const trainCoinPredictor = () => {
+  return api.post('/ml/train/coin-predictor')
+}
+
+/**
  * 训练推荐模型（管理员）
  */
 export const trainRecommender = () => {

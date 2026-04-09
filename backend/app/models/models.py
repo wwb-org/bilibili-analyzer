@@ -2,7 +2,19 @@
 数据模型定义
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, BigInteger, String, Text, Float, DateTime, Enum
+from sqlalchemy import (
+    Column,
+    Integer,
+    BigInteger,
+    String,
+    Text,
+    Float,
+    DateTime,
+    Boolean,
+    UniqueConstraint,
+    Index,
+    JSON,
+)
 from app.core.database import Base
 import enum
 
@@ -23,6 +35,11 @@ class User(Base):
     role = Column(String(20), default=UserRole.USER)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    bilibili_uid = Column(BigInteger, nullable=True)
+    bilibili_name = Column(String(100), nullable=True)
+    bilibili_avatar = Column(String(500), nullable=True)
+    bilibili_sign = Column(String(500), nullable=True)
+    avatar = Column(String(500), nullable=True)  # 用户自定义头像路径
 
 
 class Video(Base):
@@ -58,9 +75,29 @@ class Comment(Base):
     video_id = Column(BigInteger, index=True, nullable=False)
     content = Column(Text, nullable=False)
     user_name = Column(String(100))
+    commenter_mid = Column(BigInteger, index=True)
+    commenter_level = Column(Integer, index=True)
+    commenter_sex = Column(String(16))
+    commenter_vip_type = Column(Integer, index=True)
+    commenter_is_official = Column(Boolean, default=False, index=True)
+    reply_count = Column(Integer, default=0)
+    up_replied = Column(Boolean, default=False)
+    comment_ctime = Column(DateTime, index=True)
     sentiment_score = Column(Float)  # 情感分数 0-1
+    emotion_label = Column(String(32), index=True)  # GoEmotions 28类主情绪
+    emotion_scores_json = Column(JSON)  # GoEmotions 28类情绪概率分布
+    emotion_model_version = Column(String(128))
+    emotion_analyzed_at = Column(DateTime)
     like_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_comments_video_emotion", "video_id", "emotion_label"),
+        Index("idx_comments_video_level", "video_id", "commenter_level"),
+        Index("idx_comments_video_vip", "video_id", "commenter_vip_type"),
+        Index("idx_comments_video_official", "video_id", "commenter_is_official"),
+        Index("idx_comments_video_reply", "video_id", "reply_count"),
+    )
 
 
 class Danmaku(Base):
@@ -100,3 +137,27 @@ class CrawlLog(Base):
     error_msg = Column(Text)
     started_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime)
+
+
+class KeywordAlertSubscription(Base):
+    """热词预警订阅配置"""
+    __tablename__ = "keyword_alert_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    enabled = Column(Boolean, default=True)
+
+    # 触发阈值
+    min_frequency = Column(Integer, default=20)
+    growth_threshold = Column(Float, default=1.0)  # 频次涨幅阈值（1.0=100%）
+    opportunity_sentiment_threshold = Column(Float, default=0.6)
+    negative_sentiment_threshold = Column(Float, default=0.4)
+    interaction_threshold = Column(Float, default=0.05)
+    top_k = Column(Integer, default=10)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', name='uk_keyword_alert_subscriptions_user'),
+    )

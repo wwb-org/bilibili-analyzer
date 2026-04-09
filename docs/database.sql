@@ -31,11 +31,30 @@ CREATE TABLE `comments`  (
   `video_id` bigint NOT NULL,
   `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `commenter_mid` bigint NULL DEFAULT NULL,
+  `commenter_level` int NULL DEFAULT NULL,
+  `commenter_sex` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `commenter_vip_type` int NULL DEFAULT NULL,
+  `commenter_is_official` tinyint(1) NULL DEFAULT 0,
+  `reply_count` int NULL DEFAULT 0,
+  `up_replied` tinyint(1) NULL DEFAULT 0,
+  `comment_ctime` datetime NULL DEFAULT NULL,
   `sentiment_score` float NULL DEFAULT NULL,
+  `emotion_label` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `emotion_scores_json` json NULL,
+  `emotion_model_version` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `emotion_analyzed_at` datetime NULL DEFAULT NULL,
   `like_count` int NULL DEFAULT NULL,
   `created_at` datetime NULL DEFAULT NULL,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `idx_rpid`(`rpid` ASC) USING BTREE,
+  INDEX `idx_comments_emotion_label`(`emotion_label` ASC) USING BTREE,
+  INDEX `idx_comments_video_emotion`(`video_id` ASC, `emotion_label` ASC) USING BTREE,
+  INDEX `idx_comments_video_level`(`video_id` ASC, `commenter_level` ASC) USING BTREE,
+  INDEX `idx_comments_video_vip`(`video_id` ASC, `commenter_vip_type` ASC) USING BTREE,
+  INDEX `idx_comments_video_official`(`video_id` ASC, `commenter_is_official` ASC) USING BTREE,
+  INDEX `idx_comments_video_reply`(`video_id` ASC, `reply_count` ASC) USING BTREE,
+  INDEX `idx_comments_comment_ctime`(`comment_ctime` ASC) USING BTREE,
   INDEX `ix_comments_video_id`(`video_id` ASC) USING BTREE,
   INDEX `ix_comments_id`(`id` ASC) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 127 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = Dynamic;
@@ -247,6 +266,27 @@ CREATE TABLE `keywords`  (
   INDEX `ix_keywords_id`(`id` ASC) USING BTREE,
   INDEX `ix_keywords_stat_date`(`stat_date` ASC) USING BTREE,
   INDEX `ix_keywords_word`(`word` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
+-- Table structure for keyword_alert_subscriptions
+-- ----------------------------
+DROP TABLE IF EXISTS `keyword_alert_subscriptions`;
+CREATE TABLE `keyword_alert_subscriptions`  (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `enabled` tinyint(1) NULL DEFAULT 1,
+  `min_frequency` int NULL DEFAULT 20,
+  `growth_threshold` float NULL DEFAULT 1,
+  `opportunity_sentiment_threshold` float NULL DEFAULT 0.6,
+  `negative_sentiment_threshold` float NULL DEFAULT 0.4,
+  `interaction_threshold` float NULL DEFAULT 0.05,
+  `top_k` int NULL DEFAULT 10,
+  `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_keyword_alert_subscriptions_user`(`user_id` ASC) USING BTREE,
+  INDEX `ix_keyword_alert_subscriptions_user_id`(`user_id` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
